@@ -10,6 +10,7 @@ import os
 import logging
 import torch  # 添加torch导入以检测GPU
 import paddle  # 直接导入paddle检查环境
+from pathlib import Path
 
 """
 使用示例:
@@ -179,22 +180,42 @@ class PDFProcessor:
         try:
             with fitz.open(pdf_path) as doc:
                 page_count = doc.page_count
-                args = [(pdf_path, pg, self.base_zoom) for pg in range(page_count)]
-
-                with Pool(processes=self.processes) as pool:
-                    results = pool.imap(self._convert_page, args)
-                    converted = []
-                    for result in results:
-                        if result is not None:
-                            converted.append(result)
-                    converted.sort(key=lambda x: x[0])
-                    return converted
+                logging.info(f"[PDF处理] 开始转换 '{Path(pdf_path).name}' ({page_count}页)")
+                
+                # 直接处理每一页，不使用进程池
+                converted = []
+                for pg in range(page_count):
+                    try:
+                        page = doc[pg]
+                        matrix = fitz.Matrix(self.base_zoom, self.base_zoom)
+                        pix = page.get_pixmap(matrix=matrix, alpha=False)
+                        img_array = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, 3)
+                        converted.append((pg, img_array))
+                        if (pg + 1) % 10 == 0 or pg == page_count - 1:
+                            # 使用百分比表示进度
+                            progress = int((pg + 1) / page_count * 100)
+                            logging.info(f"[PDF转换] 进度: {progress}% ({pg+1}/{page_count}页)")
+                    except Exception as e:
+                        logging.warning(f"[PDF转换] 页面{pg+1}失败: {str(e)}")
+                
+                if not converted:
+                    logging.error("[PDF转换] 失败: 没有页面成功转换")
+                else:
+                    logging.info(f"[PDF转换] 完成: 成功转换{len(converted)}/{page_count}页 ({int(len(converted)/page_count*100)}%)")
+                
+                # 确保页码顺序正确
+                converted.sort(key=lambda x: x[0])
+                return converted
+                
         except Exception as e:
-            logging.error(f"PDF conversion failed: {e}")
+            logging.error(f"[PDF转换] 失败: {str(e)}")
             return []
 
     @staticmethod
     def _convert_page(args: tuple) -> Optional[Tuple[int, np.ndarray]]:
+        """
+        此方法保留但不再使用，为保持API兼容性
+        """
         pdf_path, pg, zoom = args
         try:
             with fitz.open(pdf_path) as doc:
@@ -213,6 +234,27 @@ class PDFProcessor:
             if line[1][0].strip()
         ) if result and result[0] else ""
 
+    def _print_progress_bar(self, progress: float, current_page: int):
+        """控制台进度条显示，改为单行固定格式"""
+        bar_length = 20
+        filled = int(progress / 100 * bar_length)
+        bar = '█' * filled + '░' * (bar_length - filled)
+        # 使用\r确保每个文件只占用一行
+        print(f"\r[OCR识别] 进度: {bar} {progress:.1f}% | 页面: {current_page}", end='', flush=True)
+
+    def _print_summary(self, total: int, success: int, failed: list, duration: float):
+        """输出处理结果摘要"""
+        print("\n" + "─" * 40)
+        logging.info(f"[OCR处理] 摘要:")
+        logging.info(f"  • 总页数    : {total} 页")
+        logging.info(f"  • 成功识别  : {success} 页 ({success / total * 100:.1f}%)")
+        if failed:
+            logging.info(f"  • 失败页面  : {len(failed)} 页 ({', '.join(map(str, failed[:5]))}" + 
+                         (f"...等{len(failed)-5}页" if len(failed) > 5 else "") + ")")
+        logging.info(f"  • 总耗时    : {duration:.1f} 秒")
+        logging.info(f"  • 平均速度  : {duration / total:.1f} 秒/页" if total > 0 else "")
+        print("─" * 40 + "\n")
+
     def _batch_process_pages(self, converted_pages: List[Tuple[int, np.ndarray]]) -> List[Document]:
         """使用批处理方式处理页面，提高GPU利用率"""
         documents = []
@@ -222,11 +264,11 @@ class PDFProcessor:
         fail_pages = []
         stage_start = time.time()
         
-        logging.info(f"📊 使用GPU批处理模式, 批次大小: {batch_size}")
+        logging.info(f"[OCR处理] 使用GPU批处理模式 (批次大小: {batch_size})")
         
         # 确保GPU模式激活
         if not (self.use_gpu and self.gpu_available):
-            logging.warning("⚠️ 批处理需要GPU支持，但GPU不可用，将切换到单页处理模式")
+            logging.warning("[OCR处理] GPU不可用，切换到单页处理模式")
             # 单页处理模式
             return self.process_pdf_single_page(converted_pages)
         
@@ -285,11 +327,13 @@ class PDFProcessor:
                     success_count += 1
                 except Exception as e:
                     fail_pages.append(page_num)
-                    logging.warning(f"  页面 {page_num} 识别失败: {str(e)}")
+                    logging.warning(f"[OCR处理] 页面{page_num}失败: {str(e)}")
             
             # 批次处理完成
             batch_time = time.time() - batch_start
-            logging.info(f"  批次 {batch_idx//batch_size + 1} 完成，处理 {len(batch_pages)} 页，耗时 {batch_time:.1f}s")
+            # 简化批次进度输出，只在每次批处理后更新一次
+            overall_progress = int(batch_end / total_pages * 100)
+            logging.info(f"[OCR处理] 进度: {overall_progress}% (批次{batch_idx//batch_size+1}完成，耗时{batch_time:.1f}s)")
             
             # 每批次后清理GPU内存
             if self.gpu_available:
@@ -318,7 +362,10 @@ class PDFProcessor:
         fail_pages = []
         stage_start = time.time()
         
-        logging.info("🔍 使用单页处理模式")
+        logging.info("[OCR处理] 使用单页处理模式")
+        
+        # 存储上次进度更新的时间，避免日志过多
+        last_log_time = time.time()
         
         for idx, (pg, img) in enumerate(converted_pages):
             page_num = pg + 1
@@ -328,6 +375,12 @@ class PDFProcessor:
                 # 显示进度条
                 progress = (idx + 1) / total_pages * 100
                 self._print_progress_bar(progress, page_num)
+                
+                # 每5秒或每10%进度更新一次日志
+                current_time = time.time()
+                if current_time - last_log_time > 5 or (int(progress) % 10 == 0 and int(progress) > 0):
+                    logging.info(f"[OCR处理] 进度: {int(progress)}% ({idx+1}/{total_pages}页)")
+                    last_log_time = current_time
                 
                 # 处理前调整图像大小以节省显存
                 if max(img.shape[0], img.shape[1]) > 1600:
@@ -353,7 +406,7 @@ class PDFProcessor:
                 success_count += 1
             except Exception as e:
                 fail_pages.append(page_num)
-                logging.warning(f"  页面 {page_num} 识别失败: {str(e)}")
+                logging.warning(f"[OCR处理] 页面{page_num}失败: {str(e)}")
 
         # 最终统计
         total_time = time.time() - stage_start
@@ -370,21 +423,21 @@ class PDFProcessor:
         try:
             # 输出处理模式信息
             mode_str = "GPU" if (self.use_gpu and self.gpu_available) else "CPU"
-            logging.info(f"🚀 开始处理PDF文件，使用{mode_str}模式")
+            logging.info(f"[PDF处理] 开始处理 '{Path(pdf_path).name}' (使用{mode_str}模式)")
             
             # 阶段1：PDF转图像
-            logging.info("▌正在解析PDF页面...")
+            logging.info("[PDF处理] 阶段1/2: 页面转换中...")
             converted_pages = self._convert_pages(pdf_path)
             if not converted_pages:
-                logging.warning("⚠️ 未找到可处理页面")
+                logging.warning("[PDF处理] 没有可处理页面")
                 return []
 
             total_pages = len(converted_pages)
             parse_time = time.time() - stage_start
-            logging.info(f"✅ 页面解析完成，共 {total_pages} 页（耗时 {parse_time:.1f}s）\n")
+            logging.info(f"[PDF处理] 页面转换完成，共{total_pages}页 (耗时{parse_time:.1f}s)")
 
             # 阶段2：OCR处理
-            logging.info("▌开始文字识别处理:")
+            logging.info("[PDF处理] 阶段2/2: OCR文字识别中...")
 
             # GPU模式下使用批处理提高性能
             if self.use_gpu and self.gpu_available and total_pages > self.gpu_params['min_pages_for_batch']:
@@ -394,25 +447,5 @@ class PDFProcessor:
                 return self.process_pdf_single_page(converted_pages)
 
         except Exception as e:
-            logging.error(f"💥 处理流程异常终止: {str(e)}")
+            logging.error(f"[PDF处理] 处理异常终止: {str(e)}")
             return []
-
-    def _print_progress_bar(self, progress: float, current_page: int):
-        """控制台进度条显示，改为单行固定格式"""
-        bar_length = 20
-        filled = int(progress / 100 * bar_length)
-        bar = '█' * filled + '░' * (bar_length - filled)
-        # 使用\r确保每个文件只占用一行
-        print(f"\r处理中 {bar} {progress:.1f}% | 页面 {current_page}", end='', flush=True)
-
-    def _print_summary(self, total: int, success: int, failed: list, duration: float):
-        """输出处理结果摘要"""
-        print("\n\n" + "═" * 50)
-        logging.info(f"📊 处理统计:")
-        logging.info(f"  总页数    : {total} 页")
-        logging.info(f"  成功识别  : {success} 页 ({success / total * 100:.1f}%)")
-        if failed:
-            logging.info(f"  失败页面  : {', '.join(map(str, failed))}")
-        logging.info(f"  总耗时    : {duration:.1f} 秒")
-        logging.info(f"  平均速度  : {duration / total:.1f} 秒/页" if total > 0 else "")
-        print("═" * 50 + "\n")
