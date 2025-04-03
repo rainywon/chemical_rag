@@ -84,6 +84,14 @@ class VectorDBBuilder:
 
             if file_extension == ".pdf":
                 processor = PDFProcessor(lang='ch', use_gpu=True)
+                # 配置GPU参数，针对1050Ti优化
+                processor.configure_gpu(
+                    batch_size=2,              # 较小批处理大小避免显存溢出
+                    min_pages_for_batch=2,     # 更低的批处理启用阈值
+                    det_limit_side_len=640,    # 降低检测分辨率以减少显存占用
+                    rec_batch_num=4,           # 较小识别批处理量
+                    det_batch_num=2            # 较小检测批处理量
+                )
                 docs = processor.process_pdf(str(file_path))
             elif file_extension in [".docx", ".doc"]:
                 loader = UnstructuredWordDocumentLoader(str(file_path))
@@ -122,13 +130,20 @@ class VectorDBBuilder:
         for subfolder in subfolders:
             folder_path = self.config.data_dir / subfolder
             if folder_path.exists() and folder_path.is_dir():
-                document_files.extend(folder_path.rglob("*"))
+                document_files.extend([f for f in folder_path.rglob("*") 
+                                    if f.suffix.lower() in ['.pdf', '.docx', '.doc']])
             else:
                 logger.warning(f"子文件夹 {subfolder} 不存在或不是目录: {folder_path}")
+                
+        # 过滤并排序文件（先处理较小的文件，避免大文件占用显存）
+        document_files = sorted(document_files, key=lambda x: x.stat().st_size)
+        logger.info(f"发现 {len(document_files)} 个待处理文件")
+
+        # 限制线程池大小以避免资源争用
         with ThreadPoolExecutor(max_workers=1) as executor:
             futures = [executor.submit(self._load_single_document, file) for file in document_files]
             results = []
-            with tqdm(total=len(futures), desc="加载文档") as pbar:
+            with tqdm(total=len(futures), desc="加载文档", unit="files") as pbar:
                 for future in as_completed(futures):
                     res = future.result()
                     if res:
@@ -137,6 +152,15 @@ class VectorDBBuilder:
                         pbar.set_postfix_str(f"已加载 {len(res)} 页")
                     else:
                         pbar.update(1)
+        
+        # 在处理完成后清理GPU缓存
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except:
+            pass
+            
         logger.info(f"✅ 成功加载 {len(results)} 页文档")
         logger.info(f"❌ 未成功加载 {self.failed_files_count} 个文件")
         self._save_processing_state()
