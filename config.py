@@ -10,9 +10,9 @@ class Config:
     def __init__(self, data_dir: str = "data"):
         # ████████ 路径配置 ████████
         self.data_dir = Path(data_dir)  # 数据存储根目录（自动转换为Path对象）
-        self.embedding_model_path = "C:/models/bge-large-zh-v1.5"  # 文本嵌入模型存储路径
+        self.embedding_model_path = r"C:\Users\coins\Desktop\models\bge-large-zh-v1.5"  # 文本嵌入模型存储路径
         self.vector_db_path = "vector_store/data"  # FAISS向量数据库存储目录
-        self.rerank_model_path = "C:/models/bge-reranker-large"  # 重排序模型路径
+        self.rerank_model_path = r"C:\Users\coins\Desktop\models\bge-reranker-large"  # 重排序模型路径
 
         # ████████ 硬件配置 ████████
         self.cuda_lazy_init = True  # 延迟CUDA初始化（避免显存立即被占用）
