@@ -11,16 +11,24 @@ import logging
 import torch  # 添加torch导入以检测GPU
 import paddle  # 直接导入paddle检查环境
 from pathlib import Path
+from config import Config
 
 """
 使用示例:
 
-# 默认方式（如果有GPU会自动使用）
-processor = PDFProcessor(lang='ch', use_gpu=True)
-docs = processor.process_pdf('example.pdf')
+# 基础使用方式（从Config加载参数）
+from config import Config
+config = Config()
+processor = PDFProcessor(
+    file_path='example.pdf',
+    lang='ch', 
+    use_gpu=True,
+    gpu_params=config.pdf_ocr_params
+)
+docs = processor.process()
 
 # 手动配置GPU参数
-processor = PDFProcessor(lang='ch', use_gpu=True)
+processor = PDFProcessor(file_path='example.pdf', lang='ch', use_gpu=True)
 processor.configure_gpu(
     batch_size=4,              # 批处理大小
     min_pages_for_batch=3,     # 最小启用批处理的页数
@@ -29,22 +37,41 @@ processor.configure_gpu(
     det_batch_num=8,           # 检测批处理量
     use_tensorrt=True          # 使用TensorRT加速（需要安装TensorRT）
 )
-docs = processor.process_pdf('example.pdf')
+docs = processor.process()
 
-# 禁用GPU
-processor = PDFProcessor(lang='ch', use_gpu=False)
-docs = processor.process_pdf('example.pdf')
+# 使用大文档优化参数
+processor = PDFProcessor(
+    file_path='large_document.pdf',
+    lang='ch', 
+    use_gpu=True,
+    gpu_params=config.pdf_ocr_large_doc_params
+)
+docs = processor.process()
+
+# 使用1050Ti优化参数
+processor = PDFProcessor(
+    file_path='example.pdf',
+    lang='ch', 
+    use_gpu=True,
+    gpu_params=config.pdf_ocr_1050ti_params
+)
+docs = processor.process()
+
+# 不使用GPU
+processor = PDFProcessor(file_path='example.pdf', lang='ch', use_gpu=False)
+docs = processor.process()
 """
 
 class PDFProcessor:
-    def __init__(self, lang: str = 'ch', use_gpu: bool = True):
+    def __init__(self, file_path: str = None, lang: str = 'ch', use_gpu: bool = True, gpu_params: dict = None):
+        self.file_path = file_path
         self.lang = lang
         self.use_gpu = use_gpu
         self.base_zoom = 1.2
         self._ocr_engine = None
         self.processes = 1  # 减少进程数以降低CPU负载
         
-        # GPU相关参数
+        # GPU相关参数 - 默认值
         self.gpu_params = {
             'batch_size': 3,          # 批处理大小
             'min_pages_for_batch': 3, # 启用批处理的最小页数
@@ -54,10 +81,16 @@ class PDFProcessor:
             'use_tensorrt': False     # 是否使用TensorRT加速
         }
         
+        # 如果提供了GPU参数，则使用提供的参数
+        if gpu_params is not None:
+            for key, value in gpu_params.items():
+                if key in self.gpu_params:
+                    self.gpu_params[key] = value
+        
         # 检查GPU可用性
         self.gpu_available = False
         self._check_gpu_availability()
-            
+        
     def _check_gpu_availability(self):
         """检查GPU可用性"""
         try:
@@ -449,3 +482,9 @@ class PDFProcessor:
         except Exception as e:
             logging.error(f"[PDF处理] 处理异常终止: {str(e)}")
             return []
+
+    def process(self) -> List[Document]:
+        """处理PDF文件，返回文档对象列表"""
+        if not self.file_path:
+            raise ValueError("请提供PDF文件路径")
+        return self.process_pdf(self.file_path)

@@ -41,11 +41,29 @@ class VectorDBBuilder:
             config (Config): 配置类，包含必要的配置
         """
         self.config = config
-        self.state_file = Path(config.vector_db_path) / "processing_state.json"
-        self.processed_files: Dict[str, Dict] = self._load_processing_state()  # 加载已处理的文件记录
-        self.chunk_cache_path = Path(self.config.vector_db_path) / "chunks_cache.json"
-        self.failed_files_count = 0  # 添加未成功加载文件计数器
-        self.need_rebuild_index = False  # 标记是否需要重建向量索引
+        
+        # 设置缓存目录路径
+        self.cache_dir = Path(config.cache_dir)
+        
+        # 设置向量数据库路径
+        self.vector_dir = Path(config.vector_db_path)
+        self.vector_backup_dir = self.vector_dir / "backups"
+        
+        # 文本块缓存路径
+        self.chunk_cache_path = self.cache_dir / "chunks_cache.json"
+        
+        # 检查文件匹配模式
+        if not hasattr(config, 'files') or not config.files:
+            # 如果config中没有files参数，使用默认值
+            self.config.files = ["data/**/*.pdf", "data/**/*.txt", "data/**/*.md", "data/**/*.docx"]
+        
+        # 添加GPU使用配置
+        self.use_gpu_for_ocr = "cuda" in self.config.device
+        
+        # 已处理文件状态
+        self.processed_files = {}
+        self.failed_files_count = 0
+        self.need_rebuild_index = False
 
     def _load_processing_state(self) -> Dict:
         """加载之前的文件处理状态"""
@@ -101,11 +119,11 @@ class VectorDBBuilder:
         
         return new_files, update_files, deleted_files
 
-    def _load_single_document(self, file_path: Path) -> Optional[List[Dict]]:
+    def _load_single_document(self, file_path: Path) -> Optional[List[Document]]:
         """多线程加载单个文档文件（支持 PDF、DOCX、DOC）"""
         try:
             if not self._should_process(file_path):
-                logger.info(f"⏭ 跳过未修改文件: {file_path.name}")
+                logger.info(f"[文档加载] 跳过未修改文件: {file_path.name}")
                 return None
 
             file_extension = file_path.suffix.lower()
@@ -117,39 +135,31 @@ class VectorDBBuilder:
                     import fitz
                     with fitz.open(str(file_path)) as doc:
                         page_count = doc.page_count
-                        logger.info(f"PDF文件 '{file_path.name}' 共有 {page_count} 页")
+                        logger.info(f"[文档加载] PDF文件 '{file_path.name}' 共有 {page_count} 页")
                         
-                    # 如果页数很多，优化内存设置
-                    processor = PDFProcessor(lang='ch', use_gpu=True)
+                    # 使用配置中的参数初始化处理器
+                    processor = PDFProcessor(
+                        file_path=str(file_path), 
+                        lang='ch', 
+                        use_gpu=self.use_gpu_for_ocr
+                    )
                     
-                    # 针对页数较多的PDF进行特别优化
+                    # 根据页数选择合适的GPU参数配置
                     if page_count > 30:
-                        logger.info(f"PDF页数较多({page_count}页)，应用内存优化配置")
-                        processor.configure_gpu(
-                            batch_size=1,               # 单页批处理以节省内存
-                            min_pages_for_batch=5,      # 仍然启用批处理，但每批仅处理一页
-                            det_limit_side_len=640,     # 降低检测分辨率
-                            rec_batch_num=2,            # 降低识别批处理量
-                            det_batch_num=1             # 降低检测批处理量
-                        )
+                        logger.info(f"[文档加载] PDF页数较多({page_count}页)，应用大文档优化配置")
+                        processor.configure_gpu(**self.config.pdf_ocr_large_doc_params)
                     else:
-                        # 针对1050Ti优化
-                        processor.configure_gpu(
-                            batch_size=2,              # 较小批处理大小避免显存溢出
-                            min_pages_for_batch=2,     # 更低的批处理启用阈值
-                            det_limit_side_len=640,    # 降低检测分辨率以减少显存占用
-                            rec_batch_num=4,           # 较小识别批处理量
-                            det_batch_num=2            # 较小检测批处理量
-                        )
+                        # 使用标准参数配置
+                        processor.configure_gpu(**self.config.pdf_ocr_params)
                     
                     # 处理PDF
-                    docs = processor.process_pdf(str(file_path))
+                    docs = processor.process()
                     
                     # 检查处理结果
                     if docs and len(docs) < page_count * 0.5:
-                        logger.warning(f"⚠️ 只识别出 {len(docs)}/{page_count} 页，低于50%，可能有问题")
+                        logger.warning(f"[文档加载] 警告: 只识别出 {len(docs)}/{page_count} 页，低于50%，可能有问题")
                     elif docs:
-                        logger.info(f"✅ 成功识别 {len(docs)}/{page_count} 页")
+                        logger.info(f"[文档加载] 成功识别 {len(docs)}/{page_count} 页")
                     
                     # 处理后清理内存
                     import gc
@@ -162,14 +172,21 @@ class VectorDBBuilder:
                         pass
                         
                 except Exception as e:
-                    logger.error(f"处理PDF文件 '{file_path.name}' 失败: {str(e)}")
+                    logger.error(f"[文档加载] 处理PDF文件 '{file_path.name}' 失败: {str(e)}")
+                    self.failed_files_count += 1
                     return None
                     
             elif file_extension in [".docx", ".doc"]:
-                loader = UnstructuredWordDocumentLoader(str(file_path))
-                docs = loader.load()
+                try:
+                    from langchain_community.document_loaders import Docx2txtLoader
+                    loader = Docx2txtLoader(str(file_path))
+                    docs = loader.load()
+                except Exception as e:
+                    logger.error(f"[文档加载] 处理DOCX文件 '{file_path.name}' 失败: {str(e)}")
+                    self.failed_files_count += 1
+                    return None
             else:
-                logger.warning(f"不支持的文件格式: {file_path.name}")
+                logger.warning(f"[文档加载] 不支持的文件格式: {file_path.name}")
                 return None
 
             if docs:
@@ -186,9 +203,10 @@ class VectorDBBuilder:
                     doc.metadata["source"] = str(file_path)
                     doc.metadata["file_name"] = file_path.name
                 return docs
+            return None
 
         except Exception as e:
-            logger.error(f"加载 {file_path} 失败: {str(e)}", exc_info=True)
+            logger.error(f"[文档加载] 加载 {file_path} 失败: {str(e)}")
             self.failed_files_count += 1
             return None
 

@@ -20,6 +20,42 @@ class Config:
         self.cuda_lazy_init = True  # 延迟CUDA初始化（避免显存立即被占用）
         self.device = "cuda" if torch.cuda.is_available() else "cpu"  # 自动检测设备
 
+        # ████████ PDF OCR配置 ████████
+        # PDF OCR参数说明:
+        # - batch_size: 批处理大小，决定一次处理多少页。值越大速度越快但显存占用越多
+        # - min_pages_for_batch: 启用批处理的最小页数，低于此值将逐页处理
+        # - det_limit_side_len: 检测分辨率，影响识别精度和速度，值越小速度越快
+        # - rec_batch_num: 识别批处理量，值越大速度越快但显存占用越多
+        # - det_batch_num: 检测批处理量，值越大速度越快但显存占用越多
+        # - use_tensorrt: 是否使用TensorRT加速，需要安装对应版本的TensorRT
+        self.pdf_ocr_params = {
+            'batch_size': 2,              # 批处理大小
+            'min_pages_for_batch': 2,     # 启用批处理的最小页数
+            'det_limit_side_len': 640,    # 检测分辨率
+            'rec_batch_num': 4,           # 识别批处理量
+            'det_batch_num': 2,           # 检测批处理量
+            'use_tensorrt': False         # 是否使用TensorRT加速
+        }
+        
+        # 针对1050Ti特别优化的参数（如果需要可以使用）
+        self.pdf_ocr_1050ti_params = {
+            'batch_size': 2,              # 批处理大小
+            'min_pages_for_batch': 2,     # 启用批处理的最小页数
+            'det_limit_side_len': 640,    # 检测分辨率
+            'rec_batch_num': 4,           # 识别批处理量
+            'det_batch_num': 2,           # 检测批处理量
+            'use_tensorrt': False         # 1050Ti通常不支持高版本TensorRT
+        }
+        
+        # 针对大文档的优化参数
+        self.pdf_ocr_large_doc_params = {
+            'batch_size': 1,              # 单页批处理以节省内存
+            'min_pages_for_batch': 5,     # 仍然启用批处理，但每批仅处理一页
+            'det_limit_side_len': 640,    # 降低检测分辨率
+            'rec_batch_num': 2,           # 降低识别批处理量
+            'det_batch_num': 1            # 降低检测批处理量
+        }
+
         # ████████ 批处理配置 ████████
         self.batch_size = 32 if torch.cuda.is_available() else 8  # 根据GPU显存自动调整批次大小
         self.normalize_embeddings = True  # 是否对嵌入向量做L2归一化处理
