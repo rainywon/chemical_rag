@@ -18,7 +18,7 @@ class QueryRequest(BaseModel):
 
 
 def sync_rag_generator(question: str) -> Generator[str, None, None]:
-    """同步生成器包装，直接返回内容"""
+    """同步生成器包装"""
     yield from rag_system.stream_query_rag_with_kb(question)
 
 
