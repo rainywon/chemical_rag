@@ -78,6 +78,10 @@ class Config:
         self.similarity_threshold = 0.5  # 相似度过滤阈值（低于此值的文档被丢弃）
         self.final_top_k = 6  # 最终返回给大模型的最相关文档数量
 
+        # ████████ 详细输出配置 ████████
+        self.print_detailed_chunks = True  # 启用详细输出
+        self.max_chunk_preview_length = 512  # 设置最大预览长度
+
 
 # ████████ 短信服务配置 ████████
 URL = "https://gyytz.market.alicloudapi.com/sms/smsSend"  # 阿里云短信API端点

@@ -52,6 +52,12 @@ class VectorDBBuilder:
         # 文本块缓存路径
         self.chunk_cache_path = self.cache_dir / "chunks_cache.json"
         
+        # 添加处理状态文件路径定义
+        self.state_file = self.cache_dir / "processing_state.json"
+        
+        # 将源文件目录定义放在初始化方法中
+        self.subfolders = ['标准']  # '标准性文件','法律', '规范性文件'
+        
         # 检查文件匹配模式
         if not hasattr(config, 'files') or not config.files:
             # 如果config中没有files参数，使用默认值
@@ -64,6 +70,11 @@ class VectorDBBuilder:
         self.processed_files = {}
         self.failed_files_count = 0
         self.need_rebuild_index = False
+        
+        # 是否输出详细的分块内容
+        self.print_detailed_chunks = getattr(config, 'print_detailed_chunks', False)
+        # 详细输出时每个文本块显示的最大字符数
+        self.max_chunk_preview_length = getattr(config, 'max_chunk_preview_length', 200)
 
     def _load_processing_state(self) -> Dict:
         """加载之前的文件处理状态"""
@@ -74,8 +85,18 @@ class VectorDBBuilder:
 
     def _save_processing_state(self):
         """保存当前文件处理状态"""
-        with open(self.state_file, "w", encoding='utf-8') as f:
-            json.dump(self.processed_files, f, indent=2, ensure_ascii=False)  # 保存已处理文件的信息
+        try:
+            # 确保目录存在
+            self.state_file.parent.mkdir(parents=True, exist_ok=True)
+            
+            # 保存状态
+            with open(self.state_file, "w", encoding='utf-8') as f:
+                json.dump(self.processed_files, f, indent=2, ensure_ascii=False)
+                
+            logger.debug(f"✅ 已保存处理状态，共 {len(self.processed_files)} 个文件记录")
+        except Exception as e:
+            logger.warning(f"⚠️ 保存处理状态失败: {str(e)}")
+            # 这里不抛出异常，避免中断主流程
 
     def _should_process(self, file_path: Path) -> bool:
         """判断文件是否需要处理"""
@@ -178,13 +199,32 @@ class VectorDBBuilder:
                     
             elif file_extension in [".docx", ".doc"]:
                 try:
+                    # 首先尝试导入依赖模块
+                    try:
+                        import docx2txt
+                    except ImportError:
+                        logger.error(f"缺少处理Word文档所需的依赖包，请运行: pip install docx2txt")
+                        # 记录错误但继续执行，以便处理其他文件类型
+                        self.failed_files_count += 1
+                        return None
+                        
                     from langchain_community.document_loaders import Docx2txtLoader
                     loader = Docx2txtLoader(str(file_path))
                     docs = loader.load()
                 except Exception as e:
                     logger.error(f"[文档加载] 处理DOCX文件 '{file_path.name}' 失败: {str(e)}")
-                    self.failed_files_count += 1
-                    return None
+                    
+                    # 尝试使用替代方法
+                    try:
+                        logger.info(f"[文档加载] 尝试使用替代方法加载Word文档...")
+                        from langchain_community.document_loaders import UnstructuredWordDocumentLoader
+                        loader = UnstructuredWordDocumentLoader(str(file_path))
+                        docs = loader.load()
+                        logger.info(f"[文档加载] 成功使用替代方法加载Word文档: {file_path.name}")
+                    except Exception as e2:
+                        logger.error(f"[文档加载] 替代方法也失败: {str(e2)}")
+                        self.failed_files_count += 1
+                        return None
             else:
                 logger.warning(f"[文档加载] 不支持的文件格式: {file_path.name}")
                 return None
@@ -220,8 +260,8 @@ class VectorDBBuilder:
         try:
             # 获取当前所有文件路径
             current_files = []
-            subfolder_list = ['标准']  # 可以从配置中获取
-            for subfolder in subfolder_list:
+            # 使用self.subfolders代替硬编码的子文件夹列表
+            for subfolder in self.subfolders:
                 folder_path = self.config.data_dir / subfolder
                 if folder_path.exists() and folder_path.is_dir():
                     current_files.extend([f for f in folder_path.rglob("*") 
@@ -285,11 +325,11 @@ class VectorDBBuilder:
         self._cleanup_deleted_files()
 
         # 获取 data_dir 下的所有子文件夹
-        subfolders = ['标准性文件','法律', '规范性文件']  # '标准性文件','法律', '规范性文件'
+        # 使用self.subfolders代替硬编码的子文件夹列表
         document_files = []
 
         # 遍历每个子文件夹，获取其中的文档文件
-        for subfolder in subfolders:
+        for subfolder in self.subfolders:
             folder_path = self.config.data_dir / subfolder
             if folder_path.exists() and folder_path.is_dir():
                 document_files.extend([f for f in folder_path.rglob("*") 
@@ -447,6 +487,10 @@ class VectorDBBuilder:
                             for chunk in cache_data.get("chunks", [])
                         ]
                         logger.info(f"✅ 从缓存加载 {len(chunks)} 个分块")
+                        
+                        # 打印分块结果概览
+                        self._print_chunks_summary(chunks)
+                        
                         return chunks
             except Exception as e:
                 logger.error(f"缓存加载失败: {str(e)}")
@@ -497,6 +541,9 @@ class VectorDBBuilder:
                         ))
                     pbar.update(1)
             logger.info(f"生成 {len(chunks)} 个语义连贯的文本块")
+            
+            # 打印分块结果概览
+            self._print_chunks_summary(chunks)
 
             # 保存处理结果到缓存
             cache_data = {
@@ -515,6 +562,114 @@ class VectorDBBuilder:
         else:
             # 如果已经通过load_documents加载并更新了缓存，直接返回文档
             return all_docs
+
+    def _print_chunks_summary(self, chunks: List[Document]):
+        """打印文本分块结果概览"""
+        if not chunks:
+            logger.info("没有文本块可供显示")
+            return
+            
+        # 统计信息
+        total_chunks = len(chunks)
+        avg_chunk_length = sum(len(chunk.page_content) for chunk in chunks) / total_chunks
+        files_count = len(set(chunk.metadata.get("source", "") for chunk in chunks))
+        
+        logger.info("\n" + "="*50)
+        logger.info("📊 文本分块处理概览")
+        logger.info("="*50)
+        logger.info(f"📄 总块数: {total_chunks}")
+        logger.info(f"📊 平均块长度: {avg_chunk_length:.1f} 字符")
+        logger.info(f"📂 涉及文件数: {files_count}")
+        
+        # 文件级统计
+        file_chunks = {}
+        for chunk in chunks:
+            source = chunk.metadata.get("source", "未知来源")
+            if source not in file_chunks:
+                file_chunks[source] = []
+            file_chunks[source].append(chunk)
+        
+        logger.info("\n📂 文件级分块统计:")
+        for file_path, file_chunks_list in sorted(file_chunks.items(), key=lambda x: len(x[1]), reverse=True):
+            file_name = Path(file_path).name if isinstance(file_path, str) else "未知文件"
+            logger.info(f"  • {file_name}: {len(file_chunks_list)} 块")
+        
+        # 显示前3个块的预览
+        logger.info("\n📝 文本块示例 (前3个):")
+        for i, chunk in enumerate(chunks[:3]):
+            # 截取前50个字符作为预览
+            preview = chunk.page_content[:50].replace("\n", " ")
+            if len(chunk.page_content) > 50:
+                preview += "..."
+            
+            file_name = Path(chunk.metadata.get("source", "未知来源")).name if isinstance(chunk.metadata.get("source", ""), str) else "未知文件"
+            page_num = chunk.metadata.get("page", "未知页码")
+            
+            logger.info(f"  {i+1}. [{file_name} - 第{page_num}页] {preview}")
+        
+        # 输出详细分块内容 (如果开启)
+        if self.print_detailed_chunks:
+            self._print_detailed_chunks(chunks)
+            
+        logger.info("="*50)
+
+    def _print_detailed_chunks(self, chunks: List[Document]):
+        """输出详细的分块内容"""
+        logger.info("\n" + "="*50)
+        logger.info("📑 详细文本块内容")
+        logger.info("="*50)
+        
+        # 将分块按文件分组
+        file_chunks = {}
+        for chunk in chunks:
+            source = chunk.metadata.get("source", "未知来源")
+            if source not in file_chunks:
+                file_chunks[source] = []
+            file_chunks[source].append(chunk)
+        
+        # 为了更有组织地输出，先按文件输出
+        for file_path, file_chunks_list in sorted(file_chunks.items(), key=lambda x: len(x[1]), reverse=True):
+            file_name = Path(file_path).name if isinstance(file_path, str) else "未知文件"
+            logger.info(f"\n📄 文件: {file_name} (共{len(file_chunks_list)}块)")
+            
+            # 输出该文件的前3个块
+            for i, chunk in enumerate(file_chunks_list[:3]):
+                page_num = chunk.metadata.get("page", "未知页码")
+                chunk_size = len(chunk.page_content)
+                
+                # 获取预览内容
+                content_preview = chunk.page_content
+                if len(content_preview) > self.max_chunk_preview_length:
+                    content_preview = content_preview[:self.max_chunk_preview_length] + "..."
+                
+                # 替换换行符以便于控制台显示
+                content_preview = content_preview.replace("\n", "\\n")
+                
+                logger.info(f"\n  块 {i+1}/{len(file_chunks_list[:3])} [第{page_num}页, {chunk_size}字符]:")
+                logger.info(f"  {content_preview}")
+            
+            # 如果文件中的块数超过3个，显示省略信息
+            if len(file_chunks_list) > 3:
+                logger.info(f"  ... 还有 {len(file_chunks_list) - 3} 个块未显示 ...")
+                
+        # 输出保存完整分块内容的提示
+        chunks_detail_file = self.cache_dir / "chunks_detail.txt"
+        try:
+            with open(chunks_detail_file, "w", encoding="utf-8") as f:
+                for i, chunk in enumerate(chunks):
+                    source = chunk.metadata.get("source", "未知来源")
+                    file_name = Path(source).name if isinstance(source, str) else "未知文件"
+                    page_num = chunk.metadata.get("page", "未知页码")
+                    
+                    f.write(f"=== 块 {i+1}/{len(chunks)} [{file_name} - 第{page_num}页] ===\n")
+                    f.write(chunk.page_content)
+                    f.write("\n\n")
+            
+            logger.info(f"\n✅ 所有文本块的详细内容已保存至: {chunks_detail_file}")
+        except Exception as e:
+            logger.error(f"保存详细块内容失败: {str(e)}")
+        
+        logger.info("="*50)
 
     def create_embeddings(self) -> HuggingFaceEmbeddings:
         """创建嵌入模型实例"""
@@ -593,6 +748,21 @@ if __name__ == "__main__":
     try:
         # 初始化配置
         config = Config()
+        
+        # 添加: 解析命令行参数，允许用户指定是否打印详细分块内容
+        import argparse
+        parser = argparse.ArgumentParser(description='构建化工安全领域向量数据库')
+        parser.add_argument('--detailed-chunks', action='store_true', 
+                           help='是否输出详细的分块内容')
+        parser.add_argument('--max-preview', type=int, default=200,
+                           help='详细输出时每个文本块显示的最大字符数')
+        args = parser.parse_args()
+        
+        # 更新配置
+        if args.detailed_chunks:
+            config.print_detailed_chunks = True
+            config.max_chunk_preview_length = args.max_preview
+            print(f"将输出详细分块内容，每块最多显示 {args.max_preview} 字符")
 
         # 构建向量数据库
         builder = VectorDBBuilder(config)

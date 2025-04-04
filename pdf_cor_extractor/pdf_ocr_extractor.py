@@ -12,6 +12,8 @@ import torch  # 添加torch导入以检测GPU
 import paddle  # 直接导入paddle检查环境
 from pathlib import Path
 from config import Config
+import json
+from datetime import datetime
 
 """
 使用示例:
@@ -62,6 +64,62 @@ processor = PDFProcessor(file_path='example.pdf', lang='ch', use_gpu=False)
 docs = processor.process()
 """
 
+# 使用彩色日志格式和更简洁的输出
+class ColoredFormatter(logging.Formatter):
+    """自定义彩色日志格式器"""
+    COLORS = {
+        'INFO': '\033[92m',      # 绿色
+        'WARNING': '\033[93m',   # 黄色
+        'ERROR': '\033[91m',     # 红色
+        'CRITICAL': '\033[91m',  # 红色
+        'DEBUG': '\033[94m',     # 蓝色
+        'RESET': '\033[0m'       # 重置颜色
+    }
+    
+    def format(self, record):
+        log_color = self.COLORS.get(record.levelname, self.COLORS['RESET'])
+        reset_color = self.COLORS['RESET']
+        
+        # 简化时间格式，只显示时:分:秒
+        record.asctime = self.formatTime(record, datefmt='%H:%M:%S')
+        
+        # 使用图标代替日志级别，增强可读性
+        if record.levelname == 'INFO':
+            level_icon = 'ℹ️'
+        elif record.levelname == 'WARNING':
+            level_icon = '⚠️'
+        elif record.levelname == 'ERROR':
+            level_icon = '❌'
+        elif record.levelname == 'CRITICAL':
+            level_icon = '🔥'
+        else:
+            level_icon = '🔍'
+            
+        # 替换原始消息中的多余标签
+        message = record.getMessage()
+        message = message.replace('[文档加载]', '📄').replace('[PDF转换]', '🔄')
+        message = message.replace('[PDF处理]', '📊').replace('[OCR处理]', '👁️')
+        
+        # 组装最终日志格式
+        log_fmt = f"{log_color}{record.asctime} {level_icon} {message}{reset_color}"
+        record.msg = log_fmt
+        return super(logging.Formatter, self).format(record)
+
+# 更新日志配置，替换build_vector_store.py中的相应代码
+def setup_logging():
+    handler = logging.StreamHandler(stream=sys.stdout)
+    handler.setFormatter(ColoredFormatter())
+    
+    # 获取根日志记录器
+    root_logger = logging.getLogger()
+    root_logger.handlers = []  # 清除现有处理程序
+    root_logger.addHandler(handler)
+    root_logger.setLevel(logging.INFO)
+    
+    # 设置一些第三方库的日志级别更高，减少干扰
+    logging.getLogger('paddleocr').setLevel(logging.WARNING)
+    logging.getLogger('paddle').setLevel(logging.WARNING)
+
 class PDFProcessor:
     def __init__(self, file_path: str = None, lang: str = 'ch', use_gpu: bool = True, gpu_params: dict = None):
         self.file_path = file_path
@@ -69,7 +127,6 @@ class PDFProcessor:
         self.use_gpu = use_gpu
         self.base_zoom = 1.2
         self._ocr_engine = None
-        self.processes = 1  # 减少进程数以降低CPU负载
         
         # GPU相关参数 - 默认值
         self.gpu_params = {
@@ -224,10 +281,6 @@ class PDFProcessor:
                         pix = page.get_pixmap(matrix=matrix, alpha=False)
                         img_array = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, 3)
                         converted.append((pg, img_array))
-                        if (pg + 1) % 10 == 0 or pg == page_count - 1:
-                            # 使用百分比表示进度
-                            progress = int((pg + 1) / page_count * 100)
-                            logging.info(f"[PDF转换] 进度: {progress}% ({pg+1}/{page_count}页)")
                     except Exception as e:
                         logging.warning(f"[PDF转换] 页面{pg+1}失败: {str(e)}")
                 
@@ -316,9 +369,6 @@ class PDFProcessor:
             batch_end = min(batch_idx + batch_size, total_pages)
             batch_pages = converted_pages[batch_idx:batch_end]
             
-            # 显示进度条
-            progress = batch_end / total_pages * 100
-            self._print_progress_bar(progress, f"{batch_idx+1}-{batch_end}")
             
             # 批量处理前释放内存
             if self.gpu_available and batch_idx > 0:
@@ -362,11 +412,6 @@ class PDFProcessor:
                     fail_pages.append(page_num)
                     logging.warning(f"[OCR处理] 页面{page_num}失败: {str(e)}")
             
-            # 批次处理完成
-            batch_time = time.time() - batch_start
-            # 简化批次进度输出，只在每次批处理后更新一次
-            overall_progress = int(batch_end / total_pages * 100)
-            logging.info(f"[OCR处理] 进度: {overall_progress}% (批次{batch_idx//batch_size+1}完成，耗时{batch_time:.1f}s)")
             
             # 每批次后清理GPU内存
             if self.gpu_available:
@@ -404,17 +449,7 @@ class PDFProcessor:
             page_num = pg + 1
             page_start = time.time()
 
-            try:
-                # 显示进度条
-                progress = (idx + 1) / total_pages * 100
-                self._print_progress_bar(progress, page_num)
-                
-                # 每5秒或每10%进度更新一次日志
-                current_time = time.time()
-                if current_time - last_log_time > 5 or (int(progress) % 10 == 0 and int(progress) > 0):
-                    logging.info(f"[OCR处理] 进度: {int(progress)}% ({idx+1}/{total_pages}页)")
-                    last_log_time = current_time
-                
+            try:                   
                 # 处理前调整图像大小以节省显存
                 if max(img.shape[0], img.shape[1]) > 1600:
                     scale = 1600 / max(img.shape[0], img.shape[1])
@@ -453,11 +488,7 @@ class PDFProcessor:
         documents = []
         stage_start = time.time()
 
-        try:
-            # 输出处理模式信息
-            mode_str = "GPU" if (self.use_gpu and self.gpu_available) else "CPU"
-            logging.info(f"[PDF处理] 开始处理 '{Path(pdf_path).name}' (使用{mode_str}模式)")
-            
+        try:            
             # 阶段1：PDF转图像
             logging.info("[PDF处理] 阶段1/2: 页面转换中...")
             converted_pages = self._convert_pages(pdf_path)
@@ -488,3 +519,39 @@ class PDFProcessor:
         if not self.file_path:
             raise ValueError("请提供PDF文件路径")
         return self.process_pdf(self.file_path)
+
+    def _generate_processing_report(self):
+        """生成文档处理报告，提供更丰富的统计信息"""
+        report = {
+            "总文件数": len(self.processed_files),
+            "总页数": sum(info.get("pages", 0) for info in self.processed_files.values()),
+            "平均每文件页数": sum(info.get("pages", 0) for info in self.processed_files.values()) / max(len(self.processed_files), 1),
+            "处理失败文件数": self.failed_files_count,
+            "成功率": 1 - (self.failed_files_count / max(len(self.processed_files), 1)),
+            "文件类型统计": {},
+            "处理时间": datetime.now().isoformat()
+        }
+        
+        # 统计文件类型
+        for file_path in self.processed_files:
+            ext = Path(file_path).suffix.lower()
+            if ext in report["文件类型统计"]:
+                report["文件类型统计"][ext] += 1
+            else:
+                report["文件类型统计"][ext] = 1
+        
+        # 保存报告
+        with open(self.cache_dir / "processing_report.json", "w", encoding="utf-8") as f:
+            json.dump(report, f, ensure_ascii=False, indent=2)
+        
+        # 输出简要报告
+        logger.info("\n📊 文档处理报告")
+        logger.info(f"📑 总文件数: {report['总文件数']} 个")
+        logger.info(f"📄 总页数: {report['总页数']} 页")
+        logger.info(f"📊 平均每文件: {report['平均每文件页数']:.1f} 页")
+        logger.info(f"✅ 成功率: {report['成功率']:.1%}")
+        
+        # 文件类型统计
+        logger.info("📂 文件类型分布:")
+        for ext, count in report["文件类型统计"].items():
+            logger.info(f"   - {ext}: {count} 个")
