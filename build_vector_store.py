@@ -56,7 +56,7 @@ class VectorDBBuilder:
         self.state_file = self.cache_dir / "processing_state.json"
         
         # 将源文件目录定义放在初始化方法中
-        self.subfolders = ['标准']  # '标准性文件','法律', '规范性文件'
+        self.subfolders = ['标准性文件','法律', '规范性文件']  # '标准性文件','法律', '规范性文件'
         
         # 检查文件匹配模式
         if not hasattr(config, 'files') or not config.files:
@@ -594,18 +594,6 @@ class VectorDBBuilder:
             file_name = Path(file_path).name if isinstance(file_path, str) else "未知文件"
             logger.info(f"  • {file_name}: {len(file_chunks_list)} 块")
         
-        # 显示前3个块的预览
-        logger.info("\n📝 文本块示例 (前3个):")
-        for i, chunk in enumerate(chunks[:3]):
-            # 截取前50个字符作为预览
-            preview = chunk.page_content[:50].replace("\n", " ")
-            if len(chunk.page_content) > 50:
-                preview += "..."
-            
-            file_name = Path(chunk.metadata.get("source", "未知来源")).name if isinstance(chunk.metadata.get("source", ""), str) else "未知文件"
-            page_num = chunk.metadata.get("page", "未知页码")
-            
-            logger.info(f"  {i+1}. [{file_name} - 第{page_num}页] {preview}")
         
         # 输出详细分块内容 (如果开启)
         if self.print_detailed_chunks:

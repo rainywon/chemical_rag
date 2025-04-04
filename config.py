@@ -79,7 +79,7 @@ class Config:
         self.final_top_k = 6  # 最终返回给大模型的最相关文档数量
 
         # ████████ 详细输出配置 ████████
-        self.print_detailed_chunks = True  # 启用详细输出
+        self.print_detailed_chunks = False  # 启用详细输出
         self.max_chunk_preview_length = 512  # 设置最大预览长度
 
 
