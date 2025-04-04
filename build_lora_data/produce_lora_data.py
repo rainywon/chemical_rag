@@ -147,7 +147,7 @@ def process_question_wrapper(client, system_prompt, error_log, question):
 def process_batch(client, system_prompt, error_log, batch):
     """带统计的批次处理"""
     print(f"\n{Colors.BLUE}▶ 开始批次处理 ({len(batch)}个问题) {Colors.END}")
-    with concurrent.futures.ThreadPoolExecutor(max_workers=200) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=100) as executor:
         process_fn = partial(process_question_wrapper, client, system_prompt, error_log)
         results = list(executor.map(process_fn, batch))
 
