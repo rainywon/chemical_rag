@@ -465,7 +465,7 @@ class RAGSystem:
             # 格式化参考文档信息
             references = self._format_references(docs, score_info)
 
-            # 发送参考文档信息（作为JSON）
+            # 发送参考文档信息
             yield json.dumps({
                 "type": "references",
                 "data": references
@@ -488,7 +488,7 @@ class RAGSystem:
                 for chunk in self.llm.stream(prompt):
                     cleaned_chunk = chunk.replace("<|im_end|>", "")
                     if cleaned_chunk:
-                        # 发送生成内容（作为普通文本）
+                        # 发送生成内容
                         yield json.dumps({
                             "type": "content",
                             "data": cleaned_chunk
@@ -507,4 +507,45 @@ class RAGSystem:
                 "type": "error",
                 "data": "⚠️ 系统处理请求时发生严重错误"
             }) + "\n"
+
+    def answer_query(self, question: str) -> Tuple[str, List[Dict], Dict]:
+        """非流式RAG生成，适用于评估模块
+        
+        Args:
+            question: 用户问题
+            
+        Returns:
+            Tuple(生成的回答, 检索的文档列表, 元数据)
+        """
+        logger.info(f"🔍 非流式处理查询(用于评估): {question[:50]}...")
+        
+        try:
+            # 阶段1：文档检索
+            docs, score_info = self._retrieve_documents(question)
+            if not docs:
+                return "未找到相关文档，无法回答该问题。", [], {"status": "no_docs"}
+            
+            # 格式化参考文档信息
+            references = self._format_references(docs, score_info)
+            
+            # 阶段2：构建上下文
+            context = "\n\n".join([
+                f"【参考文档{i + 1}】{doc.page_content}\n"
+                f"- 来源: {Path(info['source']).name}\n"
+                f"- 综合置信度: {info['final_score'] * 100:.1f}%"
+                for i, (doc, info) in enumerate(zip(docs, score_info))
+            ])
+            
+            # 阶段3：构建提示模板
+            prompt = self._build_prompt(question, context)
+            
+            # 阶段4：一次性生成（非流式）
+            answer = self.llm.invoke(prompt)
+            cleaned_answer = answer.replace("<|im_end|>", "").strip()
+            
+            return cleaned_answer, references, {"status": "success"}
+            
+        except Exception as e:
+            logger.exception(f"非流式处理严重错误: {str(e)}")
+            return f"处理请求时发生错误: {str(e)}", [], {"status": "error", "error": str(e)}
 

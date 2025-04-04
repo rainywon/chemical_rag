@@ -7,7 +7,6 @@
 import os
 import json
 import logging
-import argparse
 import sys
 from typing import List, Dict, Any
 from tqdm import tqdm
@@ -31,15 +30,18 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# 直接配置参数，不需要通过命令行输入
+TEST_DATA_PATH = "evaluate/test_data/chemical_safety_test_questions.json"
+OUTPUT_PATH = "evaluate/results/generation_results.json"
+
 class GenerationEvaluator:
     """RAG系统生成模块评估器"""
     
-    def __init__(self, config_path: str, test_data_path: str):
+    def __init__(self, test_data_path: str):
         """
         初始化评估器
         
         Args:
-            config_path: 配置文件路径
             test_data_path: 测试数据集路径
         """
         self.config = Config()
@@ -138,8 +140,8 @@ class GenerationEvaluator:
                 # 提取检索到的上下文
                 contexts = []
                 for doc in retrieved_docs:
-                    if "text_chunk" in doc:
-                        contexts.append(doc["text_chunk"])
+                    if "content" in doc:
+                        contexts.append(doc["content"])
                     else:
                         logger.warning(f"检索结果中缺少文本内容: {doc}")
                 
@@ -210,15 +212,9 @@ class GenerationEvaluator:
             logger.info(f"详细评估结果已保存至: {detailed_path}")
 
 def main():
-    parser = argparse.ArgumentParser(description="RAG系统生成模块评估")
-    parser.add_argument("--config", type=str, required=True, help="配置文件路径")
-    parser.add_argument("--test_data", type=str, required=True, help="测试数据集路径")
-    parser.add_argument("--output", type=str, default="evaluation_results/generation_results.json", 
-                        help="评估结果保存路径")
-    args = parser.parse_args()
-    
-    evaluator = GenerationEvaluator(args.config, args.test_data)
-    evaluator.run_evaluation(args.output)
+    # 直接使用硬编码的参数
+    evaluator = GenerationEvaluator(TEST_DATA_PATH)
+    evaluator.run_evaluation(OUTPUT_PATH)
 
 if __name__ == "__main__":
     main() 
