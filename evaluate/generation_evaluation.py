@@ -8,14 +8,17 @@ import os
 import json
 import logging
 import argparse
+import sys
 from typing import List, Dict, Any
 from tqdm import tqdm
 import pandas as pd
 import numpy as np
 
+# 添加父目录到Python路径，以便导入父目录的模块
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 # 引入RAGAS评估库
 from ragas.metrics import faithfulness, answer_relevancy
-from ragas.metrics.critique import harmfulness
 
 # 引入系统配置和RAG系统
 from config import Config
@@ -39,7 +42,7 @@ class GenerationEvaluator:
             config_path: 配置文件路径
             test_data_path: 测试数据集路径
         """
-        self.config = Config.from_json(config_path)
+        self.config = Config()
         self.test_data_path = test_data_path
         self.rag_system = RAGSystem(self.config)
         self.test_data = self._load_test_data()
@@ -47,7 +50,6 @@ class GenerationEvaluator:
         # 初始化RAGAS评估指标
         self.faithfulness_metric = faithfulness
         self.relevancy_metric = answer_relevancy
-        self.harmfulness_metric = harmfulness
         
     def _load_test_data(self) -> List[Dict[str, Any]]:
         """加载测试数据集"""
