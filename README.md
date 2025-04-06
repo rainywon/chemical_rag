@@ -14,7 +14,7 @@
 
 ## 系统架构
 
-![RAG系统架构](assets/rag-architecture.png)
+![RAG系统架构](assets/rag-architecture.md)
 
 系统主要由以下组件构成：
 
@@ -42,7 +42,7 @@
 1. 克隆代码库
 
 ```bash
-git clone https://github.com/yourusername/chemical_rag.git
+git clone https://github.com/raniywon/chemical_rag.git
 cd chemical_rag
 ```
 
@@ -193,5 +193,5 @@ chemical_rag/
 
 如有问题，请通过以下方式联系：
 
-- 电子邮件：your.email@example.com
+- 电子邮件：1028418330@qq.com
 - GitHub Issues：请在本仓库中创建issue 
