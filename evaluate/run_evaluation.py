@@ -117,12 +117,42 @@ def main():
     print(f"  命中率@5: {results['retrieval']['hit_rate']['hit@5']:.4f}")
     print(f"  平均倒数排名(MRR): {results['retrieval']['mrr']:.4f}")
     
-    # 生成模块指标
-    print("\n▶ 生成模块性能:")
-    print(f"  忠实度: {results['generation']['faithfulness']['faithfulness_score']:.4f}")
-    print(f"  矛盾率: {results['generation']['faithfulness']['contradiction_rate']:.4f}")
-    print(f"  支持率: {results['generation']['faithfulness']['support_rate']:.4f}")
-    print(f"  相关性: {results['generation']['relevance']['relevance_score']:.4f}")
+    # 生成模块指标 - Ragas评估
+    print("\n▶ 生成模块性能 (Ragas评估):")
+    ragas_metrics = results['generation'].get('ragas_metrics', {})
+    
+    # 忠实度
+    faithfulness = ragas_metrics.get('faithfulness', {}).get('score', 0)
+    print(f"  忠实度(Faithfulness): {faithfulness:.4f}")
+    
+    # 答案相关性
+    answer_relevancy = ragas_metrics.get('answer_relevancy', {}).get('score', 0)
+    print(f"  答案相关性(Answer Relevancy): {answer_relevancy:.4f}")
+    
+    # 上下文精确度
+    context_precision = ragas_metrics.get('context_precision', {}).get('score', 0)
+    print(f"  上下文精确度(Context Precision): {context_precision:.4f}")
+    
+    # 上下文相关性
+    context_relevancy = ragas_metrics.get('context_relevancy', {}).get('score', 0)
+    print(f"  上下文相关性(Context Relevancy): {context_relevancy:.4f}")
+    
+    # 上下文召回率
+    context_recall = ragas_metrics.get('context_recall', {}).get('score', 0)
+    print(f"  上下文召回率(Context Recall): {context_recall:.4f}")
+    
+    # 有害性评估
+    harmfulness = ragas_metrics.get('harmfulness', {}).get('score', 0)
+    print(f"  无害性(Safety): {harmfulness:.4f}")
+    
+    # 综合得分
+    overall_score = ragas_metrics.get('overall_score', 0)
+    print(f"  综合评分(Overall Score): {overall_score:.4f}")
+    
+    # 评估样本信息
+    evaluated_samples = ragas_metrics.get('meta', {}).get('evaluated_samples', 0)
+    total_samples = ragas_metrics.get('meta', {}).get('total_samples', 0)
+    print(f"\n  评估样本: {evaluated_samples}/{total_samples}")
     
     print("\n✅ 评估完成！详细结果保存在: " + args.output_dir)
 

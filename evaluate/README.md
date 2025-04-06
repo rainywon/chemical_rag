@@ -9,7 +9,7 @@ evaluate/
 ├── README.md                   # 本说明文档
 ├── run_evaluation.py           # 主评估运行程序
 ├── evaluate_retrieval.py       # 检索模块评估工具
-├── evaluate_generation.py      # 生成模块评估工具
+├── evaluate_generation.py      # 生成模块评估工具（使用Ragas）
 ├── test_data/                  # 测试数据目录
 │   ├── retrieval_test_data.json   # 检索模块测试数据
 │   └── generation_test_data.json  # 生成模块测试数据
@@ -30,17 +30,37 @@ evaluate/
    - 对于每个查询，计算第一个相关文档排名的倒数，然后取平均值
    - 值越接近1表示相关文档排名越靠前
 
-### 生成模块评估
+### 生成模块评估 (使用Ragas)
+
+[Ragas](https://github.com/explodinggradients/ragas) 是一个专门用于评估RAG系统的开源框架，提供多种指标衡量生成内容的质量。本项目使用以下Ragas指标：
 
 1. **忠实度 (Faithfulness)**
-   - 评估生成内容是否与检索到的文档内容一致
-   - 检测生成内容中是否存在与检索文档矛盾的信息
-   - 计算支持率：生成内容在检索文档中能找到支持证据的比例
+   - 评估生成内容是否与检索文档内容一致，不包含虚构或矛盾信息
+   - 分数范围从0到1，1表示完全忠实
 
-2. **答案相关性 (Answer Relevance)**
-   - 评估生成内容与问题的相关度
-   - 计算生成内容与标准答案的重叠程度
-   - 计算生成内容与上下文检索文档的匹配程度
+2. **答案相关性 (Answer Relevancy)**
+   - 评估生成内容与问题的相关程度
+   - 分数范围从0到1，1表示完全相关
+
+3. **上下文精确度 (Context Precision)**
+   - 评估检索到的上下文中与问题相关的信息比例
+   - 高分表示检索到的上下文高度相关
+
+4. **上下文相关性 (Context Relevancy)**
+   - 评估上下文与问题之间的语义相关性
+   - 高分表示检索到的上下文与问题语义相关
+
+5. **上下文召回率 (Context Recall)**
+   - 评估上下文是否包含回答问题所需的所有信息
+   - 高分表示上下文提供了完整的信息
+
+6. **无害性 (Harmfulness)**
+   - 评估生成内容是否包含有害信息
+   - 高分表示生成内容无害且安全
+
+7. **综合得分 (Overall Score)**
+   - 基于上述指标的加权平均计算
+   - 提供对系统整体性能的单一量化指标
 
 ## 使用方法
 
@@ -101,17 +121,60 @@ python evaluate/run_evaluation.py --test_data_dir custom_data --output_dir custo
   },
   "generation": {
     "faithfulness": {
-      "contradiction_rate": 0.05,
-      "support_rate": 0.85,
-      "faithfulness_score": 0.95,
-      "total_facts": 120
+      "faithfulness_score": 0.85
     },
     "relevance": {
       "question_overlap": 0.32,
       "context_relevance": 0.75,
-      "gold_answer_overlap": 0.68,
       "relevance_score": 0.78
+    },
+    "ragas_metrics": {
+      "faithfulness": {
+        "score": 0.85,
+        "raw_scores": [...]
+      },
+      "answer_relevancy": {
+        "score": 0.82,
+        "raw_scores": [...]
+      },
+      "context_precision": {
+        "score": 0.75,
+        "raw_scores": [...]
+      },
+      "context_relevancy": {
+        "score": 0.78,
+        "raw_scores": [...]
+      },
+      "context_recall": {
+        "score": 0.72,
+        "raw_scores": [...]
+      },
+      "harmfulness": {
+        "score": 0.95,
+        "raw_scores": [...]
+      },
+      "overall_score": 0.81,
+      "meta": {
+        "total_samples": 10,
+        "evaluated_samples": 10
+      }
     }
   }
 }
-``` 
+```
+
+## Ragas配置
+
+Ragas评估使用以下权重计算综合得分：
+
+```python
+weights = {
+    "faithfulness": 0.3,          # 忠实度权重
+    "answer_relevancy": 0.25,     # 答案相关性权重
+    "context_precision": 0.15,    # 上下文精确度权重
+    "context_relevancy": 0.15,    # 上下文相关性权重
+    "context_recall": 0.15        # 上下文召回率权重
+}
+```
+
+可以通过修改`evaluate_generation.py`中的权重配置来定制评估重点。 
