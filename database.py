@@ -3,11 +3,6 @@ import mysql.connector
 from mysql.connector import pooling
 # 引入 FastAPI 的 HTTPException 模块，用于抛出 HTTP 错误
 from fastapi import HTTPException
-import logging
-
-# 配置日志
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 # 配置数据库连接信息，包括主机、用户名、密码、数据库名及连接池大小
 DATABASE_CONFIG = {
@@ -53,9 +48,6 @@ def execute_query(query: str, params: tuple = ()):
         return cursor.fetchall()
     except mysql.connector.Error as err:
         # 如果查询过程中发生错误，抛出 HTTP 500 错误，附带错误信息
-        logger.error(f"数据库查询错误: {err}")
-        logger.error(f"查询: {query}")
-        logger.error(f"参数: {params}")
         raise HTTPException(status_code=500, detail=f"数据库查询失败: {err}")
     finally:
         # 确保游标和连接最终会被关闭
@@ -79,39 +71,13 @@ def execute_update(query: str, params: tuple = ()):
         cursor.execute(query, params)
         # 提交更改到数据库
         conn.commit()
-        return cursor.rowcount
     except mysql.connector.Error as err:
         # 如果更新操作失败，回滚事务
         conn.rollback()
         # 抛出 HTTP 500 错误，附带错误信息
-        logger.error(f"数据库更新错误: {err}")
-        logger.error(f"查询: {query}")
-        logger.error(f"参数: {params}")
         raise HTTPException(status_code=500, detail=f"数据库更新失败: {err}")
     finally:
         # 确保游标和连接最终会被关闭
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
-
-def execute_many(query, data):
-    """执行批量操作并返回受影响的行数"""
-    conn = None
-    cursor = None
-    try:
-        conn = get_db_conn()
-        cursor = conn.cursor()
-        cursor.executemany(query, data)
-        conn.commit()
-        return cursor.rowcount
-    except mysql.connector.Error as e:
-        if conn:
-            conn.rollback()
-        logger.error(f"数据库批量更新错误: {e}")
-        logger.error(f"查询: {query}")
-        raise HTTPException(status_code=500, detail=f"数据库批量更新失败: {e}")
-    finally:
         if cursor:
             cursor.close()
         if conn:

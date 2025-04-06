@@ -56,7 +56,7 @@ class VectorDBBuilder:
         self.state_file = self.cache_dir / "processing_state.json"
         
         # 将源文件目录定义放在初始化方法中
-        self.subfolders = ['标准性文件','法律', '规范性文件']  # '标准性文件','法律', '规范性文件'
+        self.subfolders = ['标准']  # '标准性文件','法律', '规范性文件'
         
         # 检查文件匹配模式
         if not hasattr(config, 'files') or not config.files:
@@ -504,6 +504,41 @@ class VectorDBBuilder:
 
         # 只有在没有从load_documents中使用缓存时才需要进行分块处理
         if not self.need_rebuild_index:
+            # 首先按文件合并页面内容，避免跨页分块断裂
+            logger.info("合并文件页面内容，准备进行整体分块...")
+            
+            # 按文件分组整理文档
+            file_docs = {}
+            for doc in all_docs:
+                source = doc.metadata.get("source", "")
+                if source not in file_docs:
+                    file_docs[source] = []
+                file_docs[source].append(doc)
+            
+            # 对每个文件的页面进行排序和合并
+            whole_docs = []
+            for source, docs in file_docs.items():
+                # 按页码排序
+                sorted_docs = sorted(docs, key=lambda x: x.metadata.get("page", 0))
+                
+                # 合并文件所有页面的内容
+                full_content = "\n\n".join([doc.page_content for doc in sorted_docs])
+                
+                # 创建完整文档对象
+                file_doc = Document(
+                    page_content=full_content,
+                    metadata={
+                        "source": source,
+                        "file_name": sorted_docs[0].metadata.get("file_name", ""),
+                        "page_count": len(sorted_docs),
+                        "is_merged_doc": True  # 标记为合并后的完整文档
+                    }
+                )
+                whole_docs.append(file_doc)
+                
+            logger.info(f"已将 {len(all_docs)} 页内容合并为 {len(whole_docs)} 个完整文档")
+            
+            # 对合并后的完整文档进行分块
             # 优化后的文本分割配置
             text_splitter = RecursiveCharacterTextSplitter(
                 chunk_size=self.config.chunk_size,  # 根据中文平均长度调整
@@ -525,11 +560,18 @@ class VectorDBBuilder:
             logger.info("开始智能分块处理...")
             chunks = []
             # 新增哈希生成和元数据增强
-            with tqdm(total=len(all_docs), desc="处理文档分块") as pbar:
-                for doc in all_docs:
+            with tqdm(total=len(whole_docs), desc="处理文档分块") as pbar:
+                for doc in whole_docs:
                     metadata = doc.metadata.copy()
+                    # 移除分块后不再适用的元数据
+                    if "is_merged_doc" in metadata:
+                        del metadata["is_merged_doc"]
+                    
+                    # 对完整文档进行分块
                     split_texts = text_splitter.split_text(doc.page_content)
-                    for text in split_texts:
+                    
+                    # 处理每个文本块
+                    for i, text in enumerate(split_texts):
                         # 应用智能边界处理，确保完整句子
                         text = self._ensure_complete_sentences(text)
                         if not text.strip():  # 跳过空文本块
@@ -539,6 +581,16 @@ class VectorDBBuilder:
                         content_hash = hashlib.md5(text.encode()).hexdigest()
                         enhanced_metadata = metadata.copy()
                         enhanced_metadata["content_hash"] = content_hash
+                        enhanced_metadata["chunk_index"] = i
+                        enhanced_metadata["total_chunks"] = len(split_texts)
+                        
+                        # 添加块位置标记
+                        if i == 0:
+                            enhanced_metadata["position"] = "document_start"
+                        elif i == len(split_texts) - 1:
+                            enhanced_metadata["position"] = "document_end"
+                        else:
+                            enhanced_metadata["position"] = "document_middle"
 
                         chunks.append(Document(
                             page_content=text,
@@ -567,7 +619,7 @@ class VectorDBBuilder:
                 json.dump(cache_data, f, ensure_ascii=False, indent=2)
 
             logger.info(f"✅ 分块缓存已保存至 {self.chunk_cache_path}")
-            return chunks  # 直接返回包含原始元数据的分块
+            return chunks
         else:
             # 如果已经通过load_documents加载并更新了缓存，直接返回文档
             return all_docs
@@ -660,14 +712,15 @@ class VectorDBBuilder:
                 doc_chunks[source] = []
             doc_chunks[source].append(chunk)
         
+        total_merged = 0
+        
         # 处理每个文档的块
         for source, source_chunks in doc_chunks.items():
-            # 按起始位置排序
+            # 按块索引排序
             sorted_chunks = sorted(source_chunks, 
-                                   key=lambda x: x.metadata.get("start_index", 0) 
-                                   if "start_index" in x.metadata else 0)
+                                   key=lambda x: x.metadata.get("chunk_index", 0))
             
-            # 处理相邻块，避免过多重复和不完整句子
+            # 检查和处理相邻块
             for i, chunk in enumerate(sorted_chunks):
                 # 确保完整句子
                 chunk.page_content = self._ensure_complete_sentences(chunk.page_content)
@@ -702,36 +755,30 @@ class VectorDBBuilder:
         
         logger.info(f"后处理完成，优化后的块数: {len(processed_chunks)}")
         return processed_chunks
-    
+        
     def _calculate_overlap_ratio(self, text1: str, text2: str) -> float:
-        """计算两段文本的重叠比率
+        """计算两个文本之间的重叠比例
         
         Args:
-            text1: 第一段文本
-            text2: 第二段文本
+            text1: 第一个文本
+            text2: 第二个文本
             
         Returns:
-            重叠比率 (0-1)
+            重叠比例（0-1之间的浮点数）
         """
         # 使用较短文本的长度作为分母
         min_len = min(len(text1), len(text2))
         if min_len == 0:
-            return 0
+            return 0.0
             
-        # 查找最长公共子串
-        shorter = text1 if len(text1) <= len(text2) else text2
-        longer = text2 if len(text1) <= len(text2) else text1
-        
-        max_overlap = 0
-        for i in range(len(shorter)):
-            for length in range(min_len, 0, -1):
-                if i + length <= len(shorter):
-                    substring = shorter[i:i+length]
-                    if substring in longer:
-                        max_overlap = max(max_overlap, length)
-                        break
-        
-        return max_overlap / min_len
+        # 寻找最长的共同子串
+        for i in range(min_len, 0, -1):
+            if text1.endswith(text2[:i]):
+                return i / min_len
+            if text2.endswith(text1[:i]):
+                return i / min_len
+                
+        return 0.0
 
     def _print_chunks_summary(self, chunks: List[Document]):
         """打印文本分块结果概览"""
@@ -912,7 +959,7 @@ if __name__ == "__main__":
         parser = argparse.ArgumentParser(description='构建化工安全领域向量数据库')
         parser.add_argument('--detailed-chunks', action='store_true', 
                            help='是否输出详细的分块内容')
-        parser.add_argument('--max-preview', type=int, default=200,
+        parser.add_argument('--max-preview', type=int, default=510,
                            help='详细输出时每个文本块显示的最大字符数')
         args = parser.parse_args()
         
