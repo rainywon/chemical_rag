@@ -1,9 +1,8 @@
 [
   {
-    "question": "苯对人体的危害有哪些？",
+    "question": "煤矿井下粉尘综合防治的技术要求有哪些？",
     "relevant_docs": [
-      "data/chemicals/benzene_hazards.txt",
-      "data/regulations/chemical_safety_regulations.txt"
+      "data\\标准性文件\\[AQ 1020—2021]煤矿井下粉尘综合防治技术规范.pdf"
     ]
   }
-] 
+]

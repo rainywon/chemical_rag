@@ -1,33 +1,9 @@
 {
   "hit_rate": {
-    "hit@1": 0.0,
-    "hit@3": 0.0,
-    "hit@5": 0.0,
-    "hit@10": 0.0,
-    "hit@20": 0.0
+    "hit@1": 1.0,
+    "hit@3": 1.0,
+    "hit@5": 1.0,
+    "hit@10": 0.0
   },
-  "precision": {
-    "precision@1": 0.0,
-    "precision@3": 0.0,
-    "precision@5": 0.0,
-    "precision@10": 0.0,
-    "precision@20": 0.0
-  },
-  "recall": {
-    "recall@1": 0.0,
-    "recall@3": 0.0,
-    "recall@5": 0.0,
-    "recall@10": 0.0,
-    "recall@20": 0.0
-  },
-  "mrr": 0.0,
-  "ndcg": {
-    "ndcg@1": 0.0,
-    "ndcg@3": 0.0,
-    "ndcg@5": 0.0,
-    "ndcg@10": 0.0,
-    "ndcg@20": 0.0
-  },
-  "type_performance": {},
-  "timestamp": "2025-04-06 14:19:27"
+  "mrr": 1.0
 }

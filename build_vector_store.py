@@ -530,6 +530,11 @@ class VectorDBBuilder:
                     metadata = doc.metadata.copy()
                     split_texts = text_splitter.split_text(doc.page_content)
                     for text in split_texts:
+                        # 应用智能边界处理，确保完整句子
+                        text = self._ensure_complete_sentences(text)
+                        if not text.strip():  # 跳过空文本块
+                            continue
+                            
                         # 生成内容哈希
                         content_hash = hashlib.md5(text.encode()).hexdigest()
                         enhanced_metadata = metadata.copy()
@@ -540,6 +545,10 @@ class VectorDBBuilder:
                             metadata=enhanced_metadata
                         ))
                     pbar.update(1)
+            
+            # 应用后处理，确保文本块的完整性和连贯性
+            chunks = self._post_process_chunks(chunks)
+            
             logger.info(f"生成 {len(chunks)} 个语义连贯的文本块")
             
             # 打印分块结果概览
@@ -562,6 +571,167 @@ class VectorDBBuilder:
         else:
             # 如果已经通过load_documents加载并更新了缓存，直接返回文档
             return all_docs
+            
+    def _ensure_complete_sentences(self, text: str) -> str:
+        """确保文本块以完整句子开始和结束
+        
+        Args:
+            text: 原始文本块
+            
+        Returns:
+            处理后的文本块，确保以完整句子开始和结束
+        """
+        if not text or len(text) < 10:  # 文本过短则直接返回
+            return text
+            
+        # 中文句子结束标记
+        sentence_end_marks = ['。', '！', '？', '；', '\n']
+        # 句子开始的可能标记（中文段落开头、章节标题等）
+        sentence_start_patterns = ['\n', '第.{1,3}章', '第.{1,3}节']
+        
+        # 处理文本块开头
+        text_stripped = text.lstrip()
+        # 如果不是以句末标点开头，也不是以大写字母或数字开头（可能是新段落），则可能是不完整句子
+        is_incomplete_start = True
+        
+        # 检查是否以完整句子或段落开始的标记
+        for pattern in sentence_start_patterns:
+            if text.startswith(pattern) or text_stripped[0].isupper() or text_stripped[0].isdigit():
+                is_incomplete_start = False
+                break
+        
+        if is_incomplete_start:
+            # 查找第一个完整句子的开始
+            for mark in sentence_end_marks:
+                pos = text.find(mark)
+                if pos > 0:
+                    # 找到句末标记后的内容作为起点
+                    try:
+                        # 确保句末标记后还有内容
+                        if pos + 1 < len(text):
+                            text = text[pos+1:].lstrip()
+                            break
+                    except:
+                        # 出错则保持原样
+                        pass
+        
+        # 处理文本块结尾
+        is_incomplete_end = True
+        # 检查是否以完整句子结束
+        for mark in sentence_end_marks:
+            if text.endswith(mark):
+                is_incomplete_end = False
+                break
+        
+        if is_incomplete_end:
+            # 找最后一个完整句子的结束位置
+            last_pos = -1
+            for mark in sentence_end_marks:
+                pos = text.rfind(mark)
+                if pos > last_pos:
+                    last_pos = pos
+                    
+            if last_pos > 0:
+                # 截取到最后一个完整句子结束
+                text = text[:last_pos+1]
+        
+        return text.strip()
+    
+    def _post_process_chunks(self, chunks: List[Document]) -> List[Document]:
+        """对分块后的文本进行后处理，优化块的质量
+        
+        Args:
+            chunks: 原始分块列表
+            
+        Returns:
+            处理后的分块列表
+        """
+        if not chunks:
+            return []
+            
+        logger.info("对文本块进行后处理优化...")
+        processed_chunks = []
+        
+        # 按文档源分组处理
+        doc_chunks = {}
+        for chunk in chunks:
+            source = chunk.metadata.get("source", "")
+            if source not in doc_chunks:
+                doc_chunks[source] = []
+            doc_chunks[source].append(chunk)
+        
+        # 处理每个文档的块
+        for source, source_chunks in doc_chunks.items():
+            # 按起始位置排序
+            sorted_chunks = sorted(source_chunks, 
+                                   key=lambda x: x.metadata.get("start_index", 0) 
+                                   if "start_index" in x.metadata else 0)
+            
+            # 处理相邻块，避免过多重复和不完整句子
+            for i, chunk in enumerate(sorted_chunks):
+                # 确保完整句子
+                chunk.page_content = self._ensure_complete_sentences(chunk.page_content)
+                
+                # 跳过空块
+                if not chunk.page_content.strip():
+                    continue
+                
+                # 过滤掉过短的块（例如只有几个字的块）
+                if len(chunk.page_content) < 50:  # 设置最小块长度阈值
+                    continue
+                
+                # 检查与前一个块的重叠度
+                if i > 0 and processed_chunks:
+                    prev_chunk = processed_chunks[-1]
+                    if prev_chunk.metadata.get("source") == source:
+                        # 计算重叠度
+                        overlap_ratio = self._calculate_overlap_ratio(
+                            prev_chunk.page_content, chunk.page_content)
+                        
+                        # 如果重叠度过高（超过70%），考虑合并或跳过
+                        if overlap_ratio > 0.7:
+                            # 如果当前块比前一个块短，跳过当前块
+                            if len(chunk.page_content) <= len(prev_chunk.page_content):
+                                continue
+                            # 否则用当前块替换前一个块
+                            else:
+                                processed_chunks[-1] = chunk
+                                continue
+                
+                processed_chunks.append(chunk)
+        
+        logger.info(f"后处理完成，优化后的块数: {len(processed_chunks)}")
+        return processed_chunks
+    
+    def _calculate_overlap_ratio(self, text1: str, text2: str) -> float:
+        """计算两段文本的重叠比率
+        
+        Args:
+            text1: 第一段文本
+            text2: 第二段文本
+            
+        Returns:
+            重叠比率 (0-1)
+        """
+        # 使用较短文本的长度作为分母
+        min_len = min(len(text1), len(text2))
+        if min_len == 0:
+            return 0
+            
+        # 查找最长公共子串
+        shorter = text1 if len(text1) <= len(text2) else text2
+        longer = text2 if len(text1) <= len(text2) else text1
+        
+        max_overlap = 0
+        for i in range(len(shorter)):
+            for length in range(min_len, 0, -1):
+                if i + length <= len(shorter):
+                    substring = shorter[i:i+length]
+                    if substring in longer:
+                        max_overlap = max(max_overlap, length)
+                        break
+        
+        return max_overlap / min_len
 
     def _print_chunks_summary(self, chunks: List[Document]):
         """打印文本分块结果概览"""
