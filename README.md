@@ -42,7 +42,7 @@
 1. 克隆代码库
 
 ```bash
-git clone https://github.com/raniywon/chemical_rag.git
+git clone https://github.com/rainywon/chemical_rag
 cd chemical_rag
 ```
 

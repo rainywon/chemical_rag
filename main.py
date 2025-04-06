@@ -9,7 +9,8 @@ from routers.query import router as query_router
 from routers.sms import router as sms_router
 from routers.login import router as login_router
 from routers.submit_feedback import router as submit_feedback_router
-
+from routers.sms_report import router as sms_report_router
+from routers.register import router as register_router
 # 创建 FastAPI 应用实例
 app = FastAPI()
 
@@ -27,7 +28,8 @@ app.include_router(query_router)  # 包含 ai生成内容 路由
 app.include_router(sms_router)  # 包含 验证码发送 路由
 app.include_router(login_router)  # 包含 登录请求 路由
 app.include_router(submit_feedback_router)  # 包含 提交反馈 路由
-
+app.include_router(sms_report_router)  # 包含 短信报告 路由
+app.include_router(register_router)  # 包含 注册请求 路由
 if __name__ == '__main__':
     # 启动应用并监听 127.0.0.1:8000 端口，启用自动重载功能
     uvicorn.run("main:app",

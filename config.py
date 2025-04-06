@@ -84,8 +84,10 @@ class Config:
 
 
 # ████████ 短信服务配置 ████████
-URL = "https://gyytz.market.alicloudapi.com/sms/smsSend"  # 阿里云短信API端点
+URL = "https://dfsns.market.alicloudapi.com/data/send_sms"  # 阿里云短信API端点
 APPCODE = 'f9b3648618f849409d2bdd5c0f07f67a'  # 用户身份验证码（需替换为实际值）
+APPKEY="204805252"
+APPSECRET="dRQ1HZmsKLlBteooUBSrF7ij6CH9xaoh"
 SMS_SIGN_ID = "90362f6500af46bb9dadd26ac6e31e11"  # 短信签名ID（控制台获取）
-TEMPLATE_ID = "908e94ccf08b4476ba6c876d13f084ad"  # 短信模板ID（对应具体短信内容格式）
+TEMPLATE_ID = "CST_ptdie100"  # 短信模板ID（对应具体短信内容格式）
 SERVER_URL = 'http://localhost:8000'  # 后端服务地址（生产环境需改为公网域名）
