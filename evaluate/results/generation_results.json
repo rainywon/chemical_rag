@@ -1,0 +1,13 @@
+{
+  "faithfulness": {
+    "contradiction_rate": 0.0,
+    "support_rate": 0.0,
+    "faithfulness_score": 1.0,
+    "total_facts": 32
+  },
+  "relevance": {
+    "question_overlap": 0.0,
+    "context_relevance": 0.0,
+    "relevance_score": 0.0
+  }
+}

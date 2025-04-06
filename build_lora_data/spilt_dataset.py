@@ -1,36 +1,59 @@
 import json
 import os
 from sklearn.model_selection import train_test_split
+import random
 
-# 定义文件名
-# filename = "chemical_safety_deepseek.json"
-filename = "chemical_safety_deepseek.json"
+# 设置随机种子以确保结果可重现
+random.seed(42)
 
-# 检查文件是否存在
-if not os.path.exists(filename):
-    print(f"文件 {filename} 不存在")
+# 定义输入和输出文件路径
+input_file = "build_lora_data/chemical_safety_deepseek.json"
+train_file = "build_lora_data/train_data.json"
+test_file = "build_lora_data/test_data.json"
+val_file = "build_lora_data/val_data.json"
+
+print(f"正在读取文件: {input_file}")
+
+# 检查输入文件是否存在
+if not os.path.exists(input_file):
+    print(f"错误: 文件 {input_file} 不存在")
 else:
-    # 打开并读取文件
-    with open(filename, "r", encoding="utf-8") as file:
-        # 加载 JSON 数据
-        data = json.load(file)
+    try:
+        # 打开并读取文件
+        with open(input_file, "r", encoding="utf-8") as f:
+            # 加载 JSON 数据
+            data = json.load(f)
+            
+            # 打印数据总量
+            print(f"数据总量: {len(data)} 条")
 
-        # 检查数据是否为列表或字典
-        if isinstance(data, (list, dict)):
-            # 将数据转换为列表（如果是字典，取其键值对）
-            if isinstance(data, dict):
-                data = list(data.items())
+            # 首先将数据分为 训练+验证+一部分测试 (90%) 和 测试 (10%)
+            train_val_data, test_data = train_test_split(data, test_size=0.1, random_state=42)
+            
+            # 然后将 训练+验证 数据分为 训练 (70/90 = 77.8%) 和 验证 (20/90 = 22.2%)
+            train_data, val_data = train_test_split(train_val_data, test_size=0.22, random_state=42)
+            
+            # 打印各集合大小及比例
+            print(f"训练集: {len(train_data)} 条 ({len(train_data)/len(data)*100:.2f}%)")
+            print(f"测试集: {len(test_data)} 条 ({len(test_data)/len(data)*100:.2f}%)")
+            print(f"验证集: {len(val_data)} 条 ({len(val_data)/len(data)*100:.2f}%)")
 
-            # 按照 8:2 的比例分割数据
-            train_data, test_data = train_test_split(data, test_size=0.3, random_state=42)
+            # 将数据保存到 JSON 文件
+            with open(train_file, "w", encoding="utf-8") as f:
+                json.dump(train_data, f, ensure_ascii=False, indent=2)
+            
+            with open(test_file, "w", encoding="utf-8") as f:
+                json.dump(test_data, f, ensure_ascii=False, indent=2)
+            
+            with open(val_file, "w", encoding="utf-8") as f:
+                json.dump(val_data, f, ensure_ascii=False, indent=2)
 
-            # 将训练集和测试集保存到 JSON 文件
-            with open("train_data.json", "w", encoding="utf-8") as train_file:
-                json.dump(train_data, train_file, ensure_ascii=False, indent=4)
-
-            with open("test_data.json", "w", encoding="utf-8") as test_file:
-                json.dump(test_data, test_file, ensure_ascii=False, indent=4)
-
-            print("数据已成功分割并保存到 train_data.json 和 test_data.json 文件中")
-        else:
-            print("JSON 数据不是一个列表或字典，无法分割")
+            print(f"数据已成功分割并保存:")
+            print(f"- 训练集: {train_file}")
+            print(f"- 测试集: {test_file}")
+            print(f"- 验证集: {val_file}")
+            
+    except json.JSONDecodeError as e:
+        print(f"JSON解析错误: {e}")
+    except Exception as e:
+        print(f"发生错误: {e}")

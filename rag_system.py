@@ -171,6 +171,74 @@ class RAGSystem:
             logger.error(f"❌ BM25初始化失败: {str(e)}")
             raise RuntimeError(f"BM25初始化失败: {str(e)}")
 
+    def _enhance_query(self, original_query: str) -> List[str]:
+        """查询增强与扩展
+        
+        :param original_query: 原始查询
+        :return: 增强后的查询列表
+        """
+        # 基础查询始终包含原始查询
+        queries = [original_query]
+        
+        try:
+            # 1. 移除停用词的简化查询
+            stop_words = {'的', '了', '是', '在', '我', '有', '和', '就', '不', '人', '都', 
+                         '一', '一个', '上', '也', '很', '到', '说', '要', '去', '你', 
+                         '会', '着', '没有', '看', '好', '自己', '这'}
+            
+            words = self._tokenize(original_query)
+            simplified_query = ' '.join([w for w in words if w not in stop_words])
+            
+            if simplified_query and simplified_query != original_query:
+                queries.append(simplified_query)
+            
+            # 2. 专业术语提取和重点关注
+            # 化工安全领域的专业术语及其权重
+            chemical_terms = {
+                '化学品': 2.0, '易燃': 2.0, '易爆': 2.0, '有毒': 2.0, '腐蚀': 2.0, 
+                '危险': 1.5, '安全': 1.5, '防护': 1.5, '事故': 1.5, '泄漏': 2.0,
+                '爆炸': 2.0, '火灾': 2.0, '中毒': 2.0, '应急': 1.5, '处置': 1.5,
+                '风险': 1.5, '危害': 1.5, '防范': 1.5, '措施': 1.0, '操作': 1.0,
+                '反应': 1.8, '物质': 1.8, '气体': 1.8, '液体': 1.8, '固体': 1.8,
+                '浓度': 1.8, '温度': 1.8, '压力': 1.8, '储存': 1.8, '运输': 1.8
+            }
+            
+            # 提取查询中的专业术语
+            matched_terms = []
+            term_weights = {}
+            
+            for term, weight in chemical_terms.items():
+                if term in original_query:
+                    matched_terms.append(term)
+                    term_weights[term] = weight
+            
+            if matched_terms:
+                # 构建专业术语增强的查询
+                terms_query = ' '.join(matched_terms)
+                if terms_query != original_query and len(matched_terms) >= 2:
+                    queries.append(terms_query)
+                
+                # 构建加权查询，复制重要术语
+                weighted_query_parts = []
+                for word in words:
+                    if word in term_weights:
+                        # 根据权重重复术语
+                        repeat = max(1, int(term_weights[word]))
+                        weighted_query_parts.extend([word] * repeat)
+                    else:
+                        weighted_query_parts.append(word)
+                
+                weighted_query = ' '.join(weighted_query_parts)
+                if weighted_query != original_query:
+                    queries.append(weighted_query)
+            
+            logger.info(f"📝 查询增强: 从原始查询'{original_query}'生成了{len(queries)}个变体")
+            return queries
+            
+        except Exception as e:
+            logger.warning(f"⚠️ 查询增强失败: {str(e)}")
+            return [original_query]  # 返回原始查询
+
     def _hybrid_retrieve(self, question: str) -> List[Dict[str, Any]]:
         """混合检索流程（向量+BM25）
 
@@ -178,44 +246,131 @@ class RAGSystem:
         :return: 包含文档和检索信息的字典列表
         """
         results = []
+        
+        # 查询增强处理
+        enhanced_queries = self._enhance_query(question)
+        
+        # 动态确定检索策略权重
+        vector_weight, bm25_weight = self._determine_retrieval_weights(question)
+        logger.info(f"🔀 动态权重: 向量检索={vector_weight:.2f}, BM25检索={bm25_weight:.2f}")
 
         # 向量检索部分
-        vector_results = self.vector_store.similarity_search_with_score(
-            question, k=self.config.vector_top_k  # 获取top k结果
-        )
-        for doc, score in vector_results:
-            # 将分数转换为标准余弦值（0~1范围）
-            norm_score = (score + 1) / 2  # 如果原始范围是[-1,1]
+        all_vector_results = []
+        for query in enhanced_queries:
+            vector_results = self.vector_store.similarity_search_with_score(
+                query, k=self.config.vector_top_k  # 获取top k结果
+            )
+            all_vector_results.extend(vector_results)
+        
+        # 去重并保留最高分数
+        unique_vector_results = {}
+        for doc, score in all_vector_results:
+            doc_id = doc.metadata.get("source", "") + str(hash(doc.page_content))
+            norm_score = (score + 1) / 2  # 转换为标准余弦值（0~1范围）
+            
+            # 如果文档已存在且新分数更高，则更新
+            if doc_id not in unique_vector_results or norm_score > unique_vector_results[doc_id][1]:
+                unique_vector_results[doc_id] = (doc, norm_score)
+        
+        # 将去重后的结果添加到结果列表
+        for doc, score in unique_vector_results.values():
             results.append({
                 "doc": doc,
-                "score": norm_score,  # 使用归一化后的分数
+                "score": score * vector_weight,  # 应用动态权重
+                "raw_score": score,
                 "type": "vector",
                 "source": doc.metadata.get("source", "unknown")
             })
             logger.info(f"🔍 向量检索结果: {doc.metadata['source']} - 分数: {score:.4f}")
 
-
         # BM25检索部分
-        tokenized_query = self._tokenize(question)  # 问题分词
-        bm25_scores = self.bm25.get_scores(tokenized_query)  # 计算BM25分数
+        all_bm25_scores = {}
+        for query in enhanced_queries:
+            tokenized_query = self._tokenize(query)  # 问题分词
+            bm25_scores = self.bm25.get_scores(tokenized_query)  # 计算BM25分数
+            
+            # 更新最高分数
+            for idx, score in enumerate(bm25_scores):
+                if idx not in all_bm25_scores or score > all_bm25_scores[idx]:
+                    all_bm25_scores[idx] = score
+        
         # 获取top k的索引（倒序排列）
-        top_bm25_indices = np.argsort(bm25_scores)[-self.config.bm25_top_k:][::-1]
+        top_bm25_indices = np.argsort(list(all_bm25_scores.values()))[-self.config.bm25_top_k:][::-1]
+        top_bm25_indices = [list(all_bm25_scores.keys())[i] for i in top_bm25_indices]
 
         for idx in top_bm25_indices:
             doc = Document(
                 page_content=self.bm25_docs[idx],
                 metadata=self.doc_metadata[idx]
             )
+            
+            bm25_score = float(all_bm25_scores[idx])
             results.append({
                 "doc": doc,
-                "score": float(bm25_scores[idx]),
+                "score": bm25_score * bm25_weight,  # 应用动态权重
+                "raw_score": bm25_score,
                 "type": "bm25",
                 "source": doc.metadata.get("source", "unknown")
             })
-            logger.info(f"🔍 BM25检索结果: {doc.metadata['source']} - 分数: {bm25_scores[idx]:.4f}")
+            logger.info(f"🔍 BM25检索结果: {doc.metadata['source']} - 分数: {bm25_score:.4f}")
 
         logger.info(f"📚 混合检索后得到{len(results)}篇文档")
         return results
+    
+    def _determine_retrieval_weights(self, question: str) -> Tuple[float, float]:
+        """动态确定检索策略权重
+        
+        :param question: 用户问题
+        :return: (向量检索权重, BM25检索权重)
+        """
+        # 默认权重
+        default_vector = 0.5
+        default_bm25 = 0.5
+        
+        try:
+            # 1. 检测问题类型特征
+            
+            # 事实型问题特征词（偏向BM25）
+            factual_indicators = ['什么是', '定义', '如何', '怎么', '哪些', 
+                               '谁', '何时', '为什么', '多少', '数据',
+                               '标准是', '要求是']
+            
+            # 概念型问题特征词（偏向向量检索）
+            conceptual_indicators = ['解释', '分析', '评价', '比较', '区别',
+                                  '关系', '影响', '原理', '机制', '思考',
+                                  '可能', '建议', '预测', '推测']
+                               
+            # 计算各类特征出现次数
+            factual_count = sum(1 for term in factual_indicators if term in question)
+            conceptual_count = sum(1 for term in conceptual_indicators if term in question)
+            
+            # 2. 考虑问题长度因素
+            # 较短问题通常是直接查询，适合关键词匹配
+            # 较长问题可能是复杂概念，适合语义匹配
+            query_length = len(question)
+            length_factor = min(1.0, query_length / 50)  # 标准化长度因素
+            
+            # 3. 确定最终权重
+            if factual_count > conceptual_count:
+                # 事实型问题：增加BM25权重
+                bm25_weight = 0.6 + 0.1 * min(factual_count, 3)
+                vector_weight = 1.0 - bm25_weight
+            elif conceptual_count > factual_count:
+                # 概念型问题：增加向量权重
+                vector_weight = 0.6 + 0.1 * min(conceptual_count, 3) + 0.1 * length_factor
+                bm25_weight = 1.0 - vector_weight
+            else:
+                # 混合类型问题：根据长度微调
+                vector_weight = default_vector + 0.1 * length_factor
+                bm25_weight = 1.0 - vector_weight
+                
+            # 确保权重相加为1
+            total = vector_weight + bm25_weight
+            return vector_weight/total, bm25_weight/total
+            
+        except Exception as e:
+            logger.warning(f"⚠️ 动态权重计算失败: {str(e)}")
+            return default_vector, default_bm25
 
     def _safe_normalize(self,scores: List[float]) -> List[float]:
         """安全归一化处理"""
@@ -304,6 +459,10 @@ class RAGSystem:
                 outputs = self.rerank_model(**inputs)
                 # 使用sigmoid转换分数
                 rerank_scores = torch.sigmoid(outputs.logits).squeeze().tolist()
+                
+                # 确保rerank_scores是列表
+                if not isinstance(rerank_scores, list):
+                    rerank_scores = [rerank_scores]
 
             # 合并分数
             for res, rerank_score in zip(results, rerank_scores):
@@ -318,10 +477,96 @@ class RAGSystem:
                 })
 
             # 按最终分数降序排列
-            return sorted(results, key=lambda x: x["final_score"], reverse=True)
+            sorted_results = sorted(results, key=lambda x: x["final_score"], reverse=True)
+            
+            # 应用多样性增强策略
+            return self._diversify_results(sorted_results)
+            
         except Exception as e:
             logger.error(f"重排序失败: {str(e)}")
             return results  # 失败时返回原始排序
+    
+    def _diversify_results(self, ranked_results: List[Dict]) -> List[Dict]:
+        """增强检索结果的多样性
+        
+        使用MMR(Maximum Marginal Relevance)算法平衡相关性和多样性
+        
+        :param ranked_results: 按分数排序的检索结果
+        :return: 多样性增强后的结果
+        """
+        if len(ranked_results) <= 2:
+            return ranked_results  # 结果太少不需要多样性优化
+        
+        try:
+            # MMR参数
+            lambda_param = 0.7  # 控制相关性vs多样性的平衡，越大越偏向相关性
+            
+            # 初始化已选择和候选文档
+            selected = [ranked_results[0]]  # 最高分文档直接选入
+            candidates = ranked_results[1:]
+            
+            while len(selected) < min(len(ranked_results), self.config.final_top_k):
+                # 计算每个候选文档的MMR分数
+                mmr_scores = []
+                
+                for candidate in candidates:
+                    # 计算相似度分数（相关性部分）
+                    relevance = candidate["final_score"]
+                    
+                    # 计算与已选文档的最大相似度（多样性部分）
+                    max_sim = 0
+                    for selected_doc in selected:
+                        # 使用文本内容的词重叠计算相似度
+                        sim = self._compute_document_similarity(
+                            candidate["doc"].page_content,
+                            selected_doc["doc"].page_content
+                        )
+                        max_sim = max(max_sim, sim)
+                    
+                    # 计算MMR分数
+                    mmr = lambda_param * relevance - (1 - lambda_param) * max_sim
+                    mmr_scores.append(mmr)
+                
+                # 选择MMR分数最高的文档
+                best_idx = mmr_scores.index(max(mmr_scores))
+                selected.append(candidates.pop(best_idx))
+            
+            # 返回多样性增强后的文档
+            return selected
+            
+        except Exception as e:
+            logger.error(f"多样性增强失败: {str(e)}")
+            # 失败时返回原始排序
+            return ranked_results[:self.config.final_top_k]
+    
+    def _compute_document_similarity(self, doc1: str, doc2: str) -> float:
+        """计算两个文档之间的相似度
+        
+        :param doc1: 第一个文档内容
+        :param doc2: 第二个文档内容
+        :return: 相似度分数（0-1）
+        """
+        try:
+            # 使用基于词集合的Jaccard相似度
+            tokens1 = set(self._tokenize(doc1))
+            tokens2 = set(self._tokenize(doc2))
+            
+            # 计算Jaccard系数
+            if not tokens1 or not tokens2:
+                return 0.0
+                
+            intersection = tokens1.intersection(tokens2)
+            union = tokens1.union(tokens2)
+            
+            # 如果文档长度相差太大，给予惩罚
+            len_ratio = min(len(doc1), len(doc2)) / max(len(doc1), len(doc2))
+            
+            # 加权相似度
+            return (len(intersection) / len(union)) * len_ratio
+            
+        except Exception as e:
+            logger.warning(f"文档相似度计算失败: {str(e)}")
+            return 0.0
 
     def _retrieve_documents(self, question: str) -> Tuple[List[Document], List[Dict]]:
         """完整检索流程
