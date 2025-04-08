@@ -28,15 +28,13 @@ else:
             print(f"数据总量: {len(data)} 条")
 
             # 首先将数据分为 训练+验证+一部分测试 (90%) 和 测试 (10%)
-            train_val_data, test_data = train_test_split(data, test_size=0.1, random_state=42)
+            train_data, test_data = train_test_split(data, test_size=0.16, random_state=42)
             
             # 然后将 训练+验证 数据分为 训练 (70/90 = 77.8%) 和 验证 (20/90 = 22.2%)
-            train_data, val_data = train_test_split(train_val_data, test_size=0.22, random_state=42)
             
             # 打印各集合大小及比例
             print(f"训练集: {len(train_data)} 条 ({len(train_data)/len(data)*100:.2f}%)")
             print(f"测试集: {len(test_data)} 条 ({len(test_data)/len(data)*100:.2f}%)")
-            print(f"验证集: {len(val_data)} 条 ({len(val_data)/len(data)*100:.2f}%)")
 
             # 将数据保存到 JSON 文件
             with open(train_file, "w", encoding="utf-8") as f:
@@ -45,8 +43,6 @@ else:
             with open(test_file, "w", encoding="utf-8") as f:
                 json.dump(test_data, f, ensure_ascii=False, indent=2)
             
-            with open(val_file, "w", encoding="utf-8") as f:
-                json.dump(val_data, f, ensure_ascii=False, indent=2)
 
             print(f"数据已成功分割并保存:")
             print(f"- 训练集: {train_file}")
