@@ -47,9 +47,10 @@ def load_existing_data(json_path):
     if os.path.exists(json_path):
         try:
             with open(json_path, "r", encoding="utf-8") as f:
-                data = json.load(f)  # 直接加载JSON数组
+                data = json.load(f)
                 for entry in data:
                     processed.add(entry["instruction"].strip())
+            print(f"{Colors.GREEN}✅ 已加载{len(processed)}条已处理数据{Colors.END}")
         except Exception as e:
             os.rename(json_path, f"{json_path}.bak")
             print(f"{Colors.YELLOW}⚠ 数据文件损坏，已备份: {str(e)}{Colors.END}")
@@ -122,8 +123,11 @@ def process_question(client, system_prompt, question, error_log, retry=3):
                 print(f"{Colors.YELLOW}⚠ 第{attempt+1}次重试，等待{wait_time}秒...{Colors.END}")
                 time.sleep(wait_time)
             else:
+                # 格式化错误记录
+                error_msg = str(e)
+                timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
                 with open(error_log, "a", encoding="utf-8") as f:
-                    f.write(f"{question}|||{str(e)}\n")
+                    f.write(f"[{timestamp}] 问题: {question}\n错误: {error_msg}\n{'='*50}\n")
                 return None
 
 def process_question_wrapper(client, system_prompt, error_log, question):
@@ -155,6 +159,26 @@ def process_batch(client, system_prompt, error_log, batch):
     failed = len(results) - success
     print(f"{Colors.GREEN}✔ 成功: {success} {Colors.YELLOW}⚠ 失败: {failed}{Colors.END}")
     return [r for r in results if r]
+
+def save_progress(processed_questions, progress_file):
+    """保存处理进度"""
+    try:
+        with open(progress_file, "w", encoding="utf-8") as f:
+            json.dump(list(processed_questions), f, ensure_ascii=False)
+    except Exception as e:
+        print(f"{Colors.RED}❌ 保存进度失败: {str(e)}{Colors.END}")
+
+def load_progress(progress_file):
+    """加载处理进度"""
+    processed = set()
+    if os.path.exists(progress_file):
+        try:
+            with open(progress_file, "r", encoding="utf-8") as f:
+                processed = set(json.load(f))
+            print(f"{Colors.GREEN}✅ 已加载{len(processed)}条进度数据{Colors.END}")
+        except Exception as e:
+            print(f"{Colors.YELLOW}⚠ 加载进度失败: {str(e)}{Colors.END}")
+    return processed
 
 def main():
     client = ZhipuAI(api_key="4e0779dc66414dc4afe0872680957d40.HnKsmRuaJjYQHEUL")
@@ -234,19 +258,37 @@ def main():
 
     # 文件配置
     base_dir = os.path.dirname(os.path.abspath(__file__))
-    question_file = os.path.join(base_dir, "random_12000_questions.py")
+    question_file = os.path.join(base_dir, "random_20000_questions.py")
     output_file = os.path.join(base_dir, "chemical_safety_deepseek_2.json")
     error_log = os.path.join(base_dir, "deepseek_errors.log")
+    progress_file = os.path.join(base_dir, "progress.json")
+
+    # 检查是否需要清理错误日志
+    if os.path.exists(error_log) and os.path.getsize(error_log) > 0:
+        # 创建备份
+        backup_error_log = f"{error_log}.{time.strftime('%Y%m%d%H%M%S')}.bak"
+        os.rename(error_log, backup_error_log)
+        print(f"{Colors.YELLOW}⚠ 已备份旧错误日志到 {backup_error_log}{Colors.END}")
+        # 创建新的空日志文件
+        with open(error_log, "w", encoding="utf-8") as f:
+            f.write(f"# 错误日志 - 创建于 {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n")
 
     # 加载数据
     processed = load_existing_data(output_file)
+    progress = load_progress(progress_file)
+    processed.update(progress)  # 合并已处理的问题
+    
     all_questions = load_questions(question_file)
     todo_questions = [q for q in all_questions if q not in processed]
     
     print(f"{Colors.BLUE}📊 待处理问题：{len(todo_questions)}/{len(all_questions)}{Colors.END}")
+    
+    if not todo_questions:
+        print(f"{Colors.GREEN}✅ 所有问题已处理完成{Colors.END}")
+        return
 
     # 分批处理
-    batch_size = 200  # 减小批次保证质量
+    batch_size = 200
     for idx in range(0, len(todo_questions), batch_size):
         batch = todo_questions[idx:idx+batch_size]
         print(f"\n{Colors.BLUE}🔷 处理批次 {idx//batch_size + 1} [数量：{len(batch)}]{Colors.END}")
@@ -255,7 +297,14 @@ def main():
         
         if results:
             save_with_backup(results, output_file)
+            # 更新进度
+            processed.update(batch)
+            save_progress(processed, progress_file)
             print(f"{Colors.GREEN}✅ 已保存{len(results)}条数据{Colors.END}")
+            
+            # 打印进度
+            progress = len(processed) / len(all_questions) * 100
+            print(f"{Colors.BLUE}📈 总进度: {progress:.1f}%{Colors.END}")
 
 if __name__ == "__main__":
     main()

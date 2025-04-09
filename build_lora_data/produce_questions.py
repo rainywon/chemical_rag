@@ -12,11 +12,14 @@ import hashlib
 API_CONFIG = {
     "ENDPOINT": "https://open.bigmodel.cn/api/paas/v4/chat/completions",
     "KEY": "4e0779dc66414dc4afe0872680957d40.HnKsmRuaJjYQHEUL",
-    "MAX_TOKENS": 70,
-    "TEMP": 0.7,  # 提高温度增加多样性
-    "BATCH_SIZE": 30,
-    "OUTPUT_FILE": "random_12000_questions.py",  # 修正文件名与produce_lora_data.py中引用一致
-    "CONCURRENCY": 12,  # 根据CPU核心数优化
+    "MAX_TOKENS": 300,  # 增加token限制
+    "TEMP": 0.5,  # 降低温度提高稳定性
+    "BATCH_SIZE": 30,  # 减小批次大小提高质量
+    "OUTPUT_FILE": "build_lora_data/random_20000_questions.py",
+    "CONCURRENCY": 12,  # 降低并发数
+    "API_TIMEOUT": 15,  # 增加超时时间
+    "API_RETRY": 2,  # 增加重试次数
+    "RATE_LIMIT_THRESHOLD": 15,  # 提高速率限制阈值
     "TOPICS": [
         ("化工现场实操", [
             "装置开停车操作", "检修安全隔离", "临时作业许可", 
@@ -135,96 +138,56 @@ API_CONFIG = {
             "设备维护策略", "设备检修策略", "设备更新策略"
         ])
     ],
-    "TEMPLATES": [  # 扩展的提示模板（更贴近用户实际提问）
-        # 急切寻求解决方法的问题
-        "我们工厂在{topic}过程中遇到了{aspect}问题，该怎么解决？",
-        "最近在处理{topic}时，{aspect}出现异常，有什么应对方法吗？",
-        "我是一名化工操作工，昨天在{topic}过程中发现{aspect}异常，这是什么原因？",
+    "TEMPLATES": [  # 专业化的提示模板
+        # 技术问题
+        "在{topic}过程中，{aspect}出现异常，请分析可能的原因及处理方案。",
+        "针对{topic}中的{aspect}问题，请提供专业的技术指导。",
+        "关于{topic}的{aspect}控制，请说明关键参数和注意事项。",
         
-        # 寻求最佳实践
-        "有没有关于{topic}中{aspect}的最佳实践或推荐标准？",
-        "我们想改进{topic}的{aspect}，业内有什么成功案例可以参考？",
-        "作为化工安全主管，怎样提高{topic}过程中的{aspect}管理水平？",
+        # 安全评估
+        "请评估{topic}中{aspect}的安全风险等级。",
+        "分析{topic}的{aspect}环节可能存在的安全隐患。",
+        "请说明{topic}的{aspect}安全控制要点。",
         
-        # 对比型问题
-        "{topic}中采用A方法和B方法处理{aspect}问题，哪个更安全？",
-        "传统{topic}和新型{topic}在{aspect}方面有什么区别？",
+        # 标准规范
+        "请说明{topic}的{aspect}相关标准规范要求。",
+        "分析{topic}中{aspect}的合规性要求。",
+        "请提供{topic}的{aspect}技术标准参考。",
         
-        # 验证自己理解的问题
-        "我理解{topic}需要控制{aspect}在一定范围内，这样做对吗？",
-        "听说{topic}过程中{aspect}可能导致安全事故，真的是这样吗？",
+        # 工艺优化
+        "请分析{topic}中{aspect}的优化方案。",
+        "针对{topic}的{aspect}问题，请提供改进建议。",
+        "请说明{topic}的{aspect}工艺参数优化方法。",
         
-        # 处理紧急情况
-        "{topic}设备突然出现{aspect}报警，需要紧急停车吗？",
-        "发现{topic}区域有{aspect}泄漏，应该采取哪些应急措施？",
+        # 设备管理
+        "请分析{topic}设备{aspect}故障的原因及预防措施。",
+        "说明{topic}的{aspect}设备维护保养要点。",
+        "请提供{topic}的{aspect}设备选型建议。",
         
-        # 日常操作疑问
-        "{topic}日常维护中，{aspect}检查项有哪些容易被忽略？",
-        "新入职员工在{topic}岗位上，应该特别注意哪些{aspect}风险？",
+        # 应急管理
+        "请说明{topic}中{aspect}的应急处置方案。",
+        "分析{topic}的{aspect}应急预案要点。",
+        "请提供{topic}的{aspect}应急响应流程。",
         
-        # 法规合规问题
-        "最新安全法规对{topic}的{aspect}有什么新要求？",
-        "{topic}的{aspect}指标需要达到什么标准才能通过审核？",
+        # 培训教育
+        "请说明{topic}的{aspect}培训重点内容。",
+        "分析{topic}中{aspect}的培训需求。",
+        "请提供{topic}的{aspect}培训方案建议。",
         
-        # 设备选型问题
-        "我们需要更换{topic}设备，在{aspect}方面应该考虑哪些因素？",
-        "选购{topic}系统时，如何评估其{aspect}性能？",
+        # 工艺控制
+        "请分析{topic}的{aspect}控制要点。",
+        "说明{topic}中{aspect}的关键控制参数。",
+        "请提供{topic}的{aspect}工艺控制方案。",
         
-        # 事故分析问题
-        "前段时间某厂{topic}{aspect}事故的根本原因是什么？",
-        "{topic}发生{aspect}故障的常见原因有哪些？",
+        # 安全管理
+        "请说明{topic}的{aspect}安全管理要求。",
+        "分析{topic}中{aspect}的安全风险控制措施。",
+        "请提供{topic}的{aspect}安全管理建议。",
         
-        # 培训相关问题
-        "如何对新员工进行{topic}的{aspect}培训？",
-        "我需要为班组准备{topic}{aspect}的安全培训，有什么重点内容？",
-        
-        # 工艺优化问题
-        "{topic}工艺中{aspect}参数如何优化才能兼顾安全和效率？",
-        "我们{topic}工序的{aspect}指标波动较大，如何稳定控制？",
-        
-        # 经验传承问题
-        "老师傅们在{topic}中处理{aspect}有什么经验技巧？",
-        "作为新手，如何快速掌握{topic}中{aspect}的关键控制点？",
-        
-        # 异常判断问题
-        "{topic}过程中{aspect}出现这种情况算正常吗？",
-        "在{topic}中，{aspect}数值达到多少才需要报警？",
-        
-        # 风险评估问题
-        "我们要进行{topic}的{aspect}变更，需要评估哪些风险？",
-        "{topic}的{aspect}风险等级应该如何确定？",
-        
-        # 现场实操问题
-        "{topic}现场操作中，{aspect}的具体步骤是怎样的？",
-        "进行{topic}时，{aspect}操作的安全要点有哪些？",
-        
-        # 设备故障问题
-        "{topic}的{aspect}设备总是出故障，可能是什么原因？",
-        "我们{topic}区域的{aspect}系统频繁报警，怎么排查？",
-        
-        # 人员安全问题
-        "{topic}过程中如何确保员工在{aspect}方面的人身安全？",
-        "发生{topic}{aspect}事故后，现场人员应如何自保？",
-        
-        # 工程改造问题
-        "我们准备对{topic}进行改造，{aspect}方面需要注意什么？",
-        "{topic}装置的{aspect}系统升级有什么建议？",
-        
-        # 材料选择问题
-        "{topic}中接触{aspect}的材料应该选用什么材质？",
-        "用于{topic}的{aspect}设备，材质选型标准是什么？",
-        
-        # 运行周期问题
-        "{topic}工艺中{aspect}多久检查一次为宜？",
-        "我们{topic}的{aspect}维保周期该如何确定？",
-        
-        # 环保问题
-        "{topic}过程中{aspect}产生的废弃物如何安全处理？",
-        "{topic}工艺的{aspect}环节如何降低环境影响？",
-        
-        # 岗位职责问题
-        "在{topic}岗位上，处理{aspect}问题是谁的责任？",
-        "{topic}中的{aspect}异常应该由哪个部门处理？"
+        # 技术评估
+        "请评估{topic}的{aspect}技术可行性。",
+        "分析{topic}中{aspect}的技术难点。",
+        "请提供{topic}的{aspect}技术方案建议。"
     ],
     "INVALID_PATTERNS": [
         r"请用代码|示意图|定义|包括以下|例如|\d\.|选择",
@@ -232,7 +195,11 @@ API_CONFIG = {
         r"[\(（][^\)）]{10,}[\)）]",  # 过滤长括号内容
         r".{100,}的[吗呢吧]",  # 修改为允许更长的问题
         r"^请问|^请告诉我|^我想知道",  # 过滤太过正式的开头
-        r"感谢|谢谢"  # 过滤结尾客套语
+        r"感谢|谢谢",  # 过滤结尾客套语
+        r"兄弟|哥们|咱们|咋整|闹心|糟了",  # 过滤口语化表达
+        r"啊|呀|呢|吧|嘛|哈",  # 过滤语气词
+        r"赶紧|马上|立刻|赶快",  # 过滤过于急切的表达
+        r"不是闹着玩的|可不是小事|这事儿得重视"  # 过滤夸张表达
     ]
 }
 
@@ -247,7 +214,9 @@ class HighSpeedGenerator:
         self.lock = threading.Lock()
         self.seen = set()
         self.questions = []
-        self.stats = {"total": 0, "valid": 0, "retries": 0}
+        self.stats = {"total": 0, "valid": 0, "retries": 0, "incomplete": 0}
+        self.save_interval = 50  # 每50个问题保存一次
+        self.last_save_count = 0
 
         # 主题缓存优化
         self.topic_pool = []
@@ -263,13 +232,16 @@ class HighSpeedGenerator:
         return random.choice(self.templates).format(topic=topic, aspect=aspect)
 
     def validate_question(self, question):
-        """验证问题的适用性和真实性"""
-        # 长度检查 - 允许更长的问题
-        if not (20 <= len(question) <= 160):  # 扩大允许范围
+        """增强问题验证"""
+        # 基本长度检查
+        if not (20 <= len(question) <= 360):
             return False
             
-        # 问号检查 - 放宽要求，允许没有问号结尾的陈述句问题
-        # 很多真实用户提问可能是"遇到了xxx问题，求解决方案"这样的形式
+        # 完整性检查
+        if question.count("，") > 3 or question.count("。") > 1:  # 避免过长或分段
+            return False
+            
+        # 问号检查
         contains_question_mark = QUESTION_END_REGEX.search(question)
         contains_question_words = re.search(r'怎么|如何|什么|为什么|哪些|多少|是否|可以|能否|需要|该不该|建议|方法|步骤|标准|操作', question)
         
@@ -280,15 +252,20 @@ class HighSpeedGenerator:
         if any(rgx.search(question) for rgx in INVALID_REGEX):
             return False
             
-        # 真实性检查 - 确保问题听起来像真人提问
+        # 真实性检查
         if re.search(r'我要求你|请生成|请提供一个|我命令你', question):
+            return False
+            
+        # 完整性检查
+        if len(question) < 10 or question.endswith("...") or question.endswith("等"):
+            self.stats["incomplete"] += 1
             return False
             
         return True
 
     def api_request(self):
-        """高性能API请求单元"""
-        for retry in range(2):  # 减少重试次数
+        """优化API请求"""
+        for retry in range(API_CONFIG["API_RETRY"]):
             try:
                 response = requests.post(
                     API_CONFIG["ENDPOINT"],
@@ -296,38 +273,43 @@ class HighSpeedGenerator:
                     json={
                         "model": "glm-4-flash",
                         "messages": [
-                            {"role": "system", "content": "你是一名化工安全领域的工程师。生成一个真实的化工安全问题，使其听起来像是一线工作人员在实际工作中提出的。问题应该简洁、直接，体现出工作中的紧迫性或实际问题，不要使用过于正式或教科书式的语言。可以包含工厂常见的简写术语。"},
+                            {"role": "system", "content": "你是一名化工安全领域的工程师。生成一个真实的化工安全问题，使其听起来像是一线工作人员在实际工作中提出的。问题应该简洁、直接，体现出工作中的紧迫性或实际问题，不要使用过于正式或教科书式的语言。可以包含工厂常见的简写术语。请确保问题完整，不要出现省略号或未完成的情况。"},
                             {"role": "user", "content": self.generate_prompt()}
                         ],
-                        "temperature": API_CONFIG["TEMP"],  # 使用配置温度
+                        "temperature": API_CONFIG["TEMP"],
                         "max_tokens": API_CONFIG["MAX_TOKENS"]
                     },
-                    timeout=15  # 缩短超时时间
+                    timeout=API_CONFIG["API_TIMEOUT"]
                 )
 
                 # 动态速率控制
                 remain = int(response.headers.get('X-RateLimit-Remaining', 100))
-                if remain < 15:
-                    time.sleep(max(0.5, 15 / remain))
+                if remain < API_CONFIG["RATE_LIMIT_THRESHOLD"]:
+                    time.sleep(max(0.5, 15 / remain))  # 增加等待时间
 
                 content = response.json()["choices"][0]["message"]["content"].strip()
+                # 清理不完整的问题
+                content = re.sub(r'\.{3,}$|等$', '', content)
                 return content.replace('"', '')
 
             except Exception as e:
-                time.sleep(0.3 * (retry + 1))
-                self.stats["retries"] += 1
+                if retry < API_CONFIG["API_RETRY"] - 1:
+                    time.sleep(0.5 * (retry + 1))  # 增加重试等待时间
+                    self.stats["retries"] += 1
+                else:
+                    return None
         return None
 
     def process_batch(self):
-        """高速批量处理"""
-        with ThreadPoolExecutor(max_workers=8) as executor:
+        """优化批量处理"""
+        with ThreadPoolExecutor(max_workers=API_CONFIG["CONCURRENCY"]) as executor:
             futures = [executor.submit(self.api_request)
                        for _ in range(API_CONFIG["BATCH_SIZE"])]
 
             batch = []
             for future in as_completed(futures):
                 if (resp := future.result()) and self.validate_question(resp):
-                    q_hash = hashlib.sha1(resp.encode()).hexdigest()  # 更快的哈希
+                    q_hash = hashlib.sha1(resp.encode()).hexdigest()
                     if q_hash not in self.seen:
                         batch.append(resp)
                         self.seen.add(q_hash)
@@ -337,31 +319,39 @@ class HighSpeedGenerator:
 
     def save_results(self):
         """安全编码的保存方法"""
-        with open(API_CONFIG["OUTPUT_FILE"], "w", encoding="utf-8") as f:
-            f.write("questions = [\n")
-            # 使用json.dumps确保正确转义
-            formatted = [f'    {json.dumps(question, ensure_ascii=False)}'
-                         for question in self.questions]
-            f.write(",\n".join(formatted))
-            f.write("\n]")
+        with self.lock:
+            with open(API_CONFIG["OUTPUT_FILE"], "w", encoding="utf-8") as f:
+                f.write("questions = [\n")
+                # 使用json.dumps确保正确转义
+                formatted = [f'    {json.dumps(question, ensure_ascii=False)}'
+                             for question in self.questions]
+                f.write(",\n".join(formatted))
+                f.write("\n]")
+            print(f"已保存{len(self.questions)}个问题")
+
+    def check_and_save(self):
+        """检查是否需要保存"""
+        if len(self.questions) - self.last_save_count >= self.save_interval:
+            self.save_results()
+            self.last_save_count = len(self.questions)
 
 
 # === 优化后的主程序 ===
 def main():
     gen = HighSpeedGenerator()
-    target = 12000  # 建议批量生成
+    target = 17000
 
-    with tqdm(total=target, desc="高速生成", unit="问") as pbar:
+    with tqdm(total=target, desc="生成问题", unit="问") as pbar:
         with ThreadPoolExecutor(max_workers=API_CONFIG["CONCURRENCY"]) as executor:
             futures = []
 
-            # 动态任务管理
             while len(gen.questions) < target:
-                # 保持任务队列充足
+                # 检查是否需要保存
+                gen.check_and_save()
+                
                 while len(futures) < API_CONFIG["CONCURRENCY"] * 2:
                     futures.append(executor.submit(gen.process_batch))
 
-                # 处理完成的任务
                 done, _ = as_completed(futures), []
                 for f in done:
                     if (batch := f.result()):
@@ -371,8 +361,14 @@ def main():
                             pbar.update(add_num)
                     futures.remove(f)
 
+    # 最后保存一次
     gen.save_results()
-    print(f"生成统计: 总请求{gen.stats['total']} 有效率{gen.stats['valid'] / gen.stats['total']:.1%}")
+    print(f"生成统计:")
+    print(f"- 总请求: {gen.stats['total']}")
+    print(f"- 有效问题: {gen.stats['valid']}")
+    print(f"- 不完整问题: {gen.stats['incomplete']}")
+    print(f"- 重试次数: {gen.stats['retries']}")
+    print(f"- 有效率: {gen.stats['valid'] / gen.stats['total']:.1%}")
 
 
 if __name__ == "__main__":
