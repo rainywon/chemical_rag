@@ -10,6 +10,9 @@ from langchain_community.vectorstores.utils import DistanceStrategy
 from config import Config
 import shutil
 from datetime import datetime
+import jieba
+from typing import List, Dict, Any
+import hashlib
 
 # 配置日志格式
 logging.basicConfig(
@@ -40,6 +43,24 @@ class ExcelVectorDBBuilder:
         self.vector_dir.mkdir(parents=True, exist_ok=True)
         self.excel_dir.mkdir(parents=True, exist_ok=True)
 
+    def _print_chunk_preview(self, content: str, source: str, index: int, total: int):
+        """打印文本块预览
+        Args:
+            content: 文本内容
+            source: 来源文件名
+            index: 当前块索引
+            total: 总块数
+        """
+
+            
+        logger.info("\n" + "="*50)
+        logger.info(f"📄 文件: {source}")
+        logger.info(f"📑 块 {index + 1}/{total}")
+        logger.info("-"*50)
+        logger.info(f"内容预览 ({len(content)} 字符):")
+        logger.info(content)
+        logger.info("="*50 + "\n")
+
     def load_chunks_from_excel(self) -> List[Document]:
         """从Excel文件中加载文本块"""
         logger.info("开始从Excel文件加载文本块...")
@@ -63,13 +84,17 @@ class ExcelVectorDBBuilder:
                 
                 # 获取文件名作为来源
                 source = excel_file.name
+                logger.info(f"\n📂 正在处理文件: {source}")
                 
                 # 处理每个文本块
                 for idx, row in df.iterrows():
-                    content = str(row["入库内容"])
+                    content = str(row["入库内容"]).strip()
                     if not content:  # 跳过空内容
                         continue
                         
+                    # 对内容进行分词处理
+                    tokenized_content = self._tokenize(content)
+                    
                     # 创建文档对象
                     doc = Document(
                         page_content=content,
@@ -77,19 +102,33 @@ class ExcelVectorDBBuilder:
                             "source": str(excel_file),
                             "file_name": source,
                             "chunk_index": idx,
-                            "total_chunks": len(df)
+                            "total_chunks": len(df),
+                            "tokens": tokenized_content,
+                            "token_count": len(tokenized_content),
+                            "content_hash": hashlib.md5(content.encode()).hexdigest(),
+                            "processed_at": datetime.now().isoformat()
                         }
                     )
                     all_chunks.append(doc)
                     
-                logger.info(f"从 {source} 成功加载 {len(df)} 个文本块")
+                    # 打印文本块预览
+                    self._print_chunk_preview(content, source, idx, len(df))
+                    
+                logger.info(f"✅ 从 {source} 成功加载 {len(df)} 个文本块")
                 
             except Exception as e:
                 logger.error(f"处理Excel文件 {excel_file.name} 时出错: {str(e)}")
                 continue
                 
-        logger.info(f"总共加载了 {len(all_chunks)} 个文本块")
+        logger.info(f"✅ 总共加载了 {len(all_chunks)} 个文本块")
         return all_chunks
+
+    def _tokenize(self, text: str) -> List[str]:
+        """专业中文分词处理
+        :param text: 待分词的文本
+        :return: 分词后的词项列表
+        """
+        return [word for word in jieba.cut(text) if word.strip()]
 
     def backup_vector_db(self):
         """备份现有向量数据库"""
