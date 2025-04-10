@@ -258,8 +258,8 @@ def main():
 
     # 文件配置
     base_dir = os.path.dirname(os.path.abspath(__file__))
-    question_file = os.path.join(base_dir, "random_20000_questions.py")
-    output_file = os.path.join(base_dir, "chemical_safety_deepseek_2.json")
+    question_file = os.path.join(base_dir, "random_22000_questions.py")
+    output_file = os.path.join(base_dir, "chemical_safety_deepseek_3.json")
     error_log = os.path.join(base_dir, "deepseek_errors.log")
     progress_file = os.path.join(base_dir, "progress.json")
 

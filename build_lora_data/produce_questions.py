@@ -15,7 +15,7 @@ API_CONFIG = {
     "MAX_TOKENS": 300,  # 增加token限制
     "TEMP": 0.5,  # 降低温度提高稳定性
     "BATCH_SIZE": 30,  # 减小批次大小提高质量
-    "OUTPUT_FILE": "build_lora_data/random_20000_questions.py",
+    "OUTPUT_FILE": "build_lora_data/random_22000_questions.py",
     "CONCURRENCY": 12,  # 降低并发数
     "API_TIMEOUT": 15,  # 增加超时时间
     "API_RETRY": 2,  # 增加重试次数
@@ -339,7 +339,7 @@ class HighSpeedGenerator:
 # === 优化后的主程序 ===
 def main():
     gen = HighSpeedGenerator()
-    target = 17000
+    target = 22000
 
     with tqdm(total=target, desc="生成问题", unit="问") as pbar:
         with ThreadPoolExecutor(max_workers=API_CONFIG["CONCURRENCY"]) as executor:
