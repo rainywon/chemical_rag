@@ -13,7 +13,7 @@ class Config:
         self.embedding_model_path = r"C:\Users\coins\Desktop\models\bge-large-zh-v1.5"  # 文本嵌入模型存储路径
         self.vector_db_path = "vector_store/data"  # FAISS向量数据库存储目录
         self.rerank_model_path = r"C:\Users\coins\Desktop\models\bge-reranker-large"  # 重排序模型路径
-
+        self.excel_dir = r"C:\wu\data\chunks"  # Excel文件目录
         # self.embedding_model_path = r"C:\wu\models\bge-large-zh-v1.5"  # 文本嵌入模型存储路径
         # self.vector_db_path = "vector_store/data"  # FAISS向量数据库存储目录
         # self.rerank_model_path = r"C:\wu\models\bge-reranker-large"  # 重排序模型路径
